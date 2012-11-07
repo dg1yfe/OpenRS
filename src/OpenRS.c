@@ -75,7 +75,7 @@ int iDescriptor=-1;
 int iConsoleSettingsModified = 0;
 
 #define MAXFPTR 256
-FILE * File[MAXFPTR];	// since TNC3OS soes not support 64 Bit pointers, but
+FILE * File[MAXFPTR];	// since TNC3OS does not support 64 Bit pointers, but
 					// wants to handle "File *" by itself, we do a mapping
 					// using a table. Instead of File * we return a table
 					// index
@@ -391,6 +391,7 @@ void putcEsc(int data)
 	case 0x03:
 	case 0x10:
 		putPort(0x10);
+	//no break -> escape, then data
 	default:
 		putPort(data);
 	}
@@ -502,6 +503,142 @@ void foundFile(struct dirent * dir)
 	putfiEsc(&dirFile);
 	free(name);
 }
+
+
+int sanitizePath(char * dirtyPath, char * cleanPath, int cleanPathMaxLen)
+{
+	char * s;
+	char * d;
+	char * c;
+	int dplen;
+	int len = 0;
+
+	if(cleanPathMaxLen == 0)
+		return -1;
+
+	dplen = strlen(dirtyPath);
+
+	if(dplen>cleanPathMaxLen)
+	{
+		return -1;
+	}
+
+	if(dplen == 0)
+	{
+		*cleanPath = 0;
+		return 0;
+	}
+
+	d = cleanPath;
+	s = dirtyPath;
+	strncpy(d,s,cleanPathMaxLen);
+
+	// replace \ by /
+	while((c = strchr(d,'\\') ))
+	{
+		*c = '/';
+	}
+
+	// remove drive & :
+	if( (c=strchr(d,':')) )
+	{
+		if(c-d<3)
+		{
+			memmove(d,c+1,cleanPathMaxLen-c-1);
+		}
+	}
+	return 0;
+}
+
+
+/*
+int findFirst(char * name, int attribute)
+{
+	struct dirent * dir;
+	char * cc;
+	char * cd;
+	char * cs;
+	size_t cslen;
+	int listdir;
+
+	listdir=0;
+
+	cslen = strlen(name)*2;
+	cs = malloc(cslen);
+
+	if(dir)
+		closedir(dir);
+
+	sanitizePath(name, cs, cslen);
+
+	cd = strstr(cs,"*.*");
+	if(cd)
+	{
+		// list directory
+		*cd = 0;
+		listdir = 1;
+	}
+
+
+	if(listdir)
+	{
+		sprintf(wd,"%s/%s",cwd,cc);
+		dir = opendir(wd);
+		if(dir && (dir = readdir(dir)))
+		{
+			putWEsc(0);
+			foundFile(dir);
+		}
+		else
+		{
+			putWEsc(-1);
+		}
+	}
+	else
+	{
+		struct stat st;
+		struct tm * time;
+		struct FileInfo dirFile;
+
+		memset(&dirFile,0,sizeof(dirFile));
+
+		if( (stat(cc, &st)==0) && (!S_ISDIR(st.st_mode)))
+		{
+			time = localtime(&((st.st_mtimespec).tv_sec));
+			dirFile.LastWriteDate.year = time->tm_year-80;
+			dirFile.LastWriteDate.month = time->tm_mon+1;
+			dirFile.LastWriteDate.day = time->tm_mday;
+			dirFile.LastWriteTime.hour = time->tm_hour;
+			dirFile.LastWriteTime.min = time->tm_min;
+			dirFile.LastWriteTime.sek_2 = time->tm_sec / 2;
+
+			dirFile.attr = 0;
+			if(S_ISDIR(st.st_mode))
+			{
+				dirFile.attr = 0x10;
+			}
+
+			dirFile.filesize = (uint32_t) st.st_size;
+
+			strncpy(dirFile.filename, name, 13);
+			putWEsc(0);
+			putfiEsc(&dirFile);
+		}
+		else
+		{
+			putWEsc(-1);
+		}
+	}
+
+}
+
+
+
+int findNext(void)
+{
+
+}
+*/
 
 
 void protocolHandler(char c)
@@ -724,6 +861,7 @@ void protocolHandler(char c)
 		if(getArgument != GET_IDLE)
 			break;
 	}
+	// no break
 	case STATE_PROCESS:
 	{
 		switch(cmd)
