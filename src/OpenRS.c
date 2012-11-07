@@ -23,6 +23,8 @@
 #include <errno.h>
 #include <time.h>
 #include <stdint.h>
+#include <ctype.h>
+
 #ifdef __APPLE__
 	#define htobe16(x)      ((u_int16_t)htons((u_int16_t)(x)))
 	#define htobe32(x)      ((u_int32_t)htonl((u_int32_t)(x)))
@@ -58,8 +60,8 @@ typedef struct ff_ftime{
 
 struct FileInfo{
 	uint16_t	attr;
-	t_ffdate	LastWriteDate;
 	t_fftime	LastWriteTime;
+	t_ffdate	LastWriteDate;
 	uint32_t	filesize;
 	char		filename[14]; 	// sprintf(&FileInfo.filename,"%-1.13s", Dateiname))
 };
@@ -78,6 +80,9 @@ FILE * File[MAXFPTR];	// since TNC3OS soes not support 64 Bit pointers, but
 					// using a table. Instead of File * we return a table
 					// index
 int fptr;
+char * cwd = NULL;
+char * wd = NULL;
+
 
 void protocolHandler(char c);
 int openSerial(char * port, int speed);
@@ -102,6 +107,16 @@ void restoreState(void)
 		if(File[i-1])
 			fclose(File[i-1]);
     	File[i-1] = NULL;
+	}
+	if(cwd)
+	{
+		free(cwd);
+		cwd=NULL;
+	}
+	if(wd)
+	{
+		free(wd);
+		wd=NULL;
 	}
 }
 
@@ -136,6 +151,10 @@ int getch()
     }
     else
     {
+    	if(c==0x7f)
+    	{
+    		c=0x08;		// replace DEL by BS
+    	}
         return c & 0xff;
     }
 }
@@ -166,7 +185,7 @@ int main(int argc, char *argv[]) {
 	{
 		if(strlen(argv[1]) >= PATH_MAX)
 		{
-			fprintf(stderr, "Invalid device name. Name exceeds %d bytes (PATH_MAX)" ,PATH_MAX);
+			fprintf(stderr, "Invalid device name. Name exceeds %d bytes (PATH_MAX)\r\n" ,PATH_MAX);
 			exit(1);
 		}
 		strncpy(port,argv[1],PATH_MAX);
@@ -179,8 +198,8 @@ int main(int argc, char *argv[]) {
 			if(c==0)
 			{
 				bitrate = DEFAULT_BITRATE;
-				fprintf(stderr, "Could not parse bitrate. Argument 2 ignored.\n");
-				fprintf(stderr, "Bitrate defaults to %d bps.\n", bitrate);
+				fprintf(stderr, "Could not parse bitrate. Argument 2 ignored.\r\n");
+				fprintf(stderr, "Bitrate defaults to %d bps.\r\n", bitrate);
 			}
 		}
 
@@ -200,7 +219,7 @@ int main(int argc, char *argv[]) {
 			command = malloc(len);
 			if(command==NULL)
 			{
-				printf("Sorry, could not allocate memory for commands.\nExiting...\n");
+				printf("Sorry, could not allocate memory for commands.\nExiting...\r\n");
 				exit(1);
 			}
 
@@ -223,12 +242,21 @@ int main(int argc, char *argv[]) {
 	}
 	else
 	{
-		printf("\nPlease specify serial device and (optionally) speed (default: 19200).\n");
-		printf("Usage: openrs <serialPort> <speed> <tnc command>\n");
-		printf("Exit with CTRL-C\n\n");
-		printf("Example:\nopenrs /dev/tty.usb 19200 flash epflash.bin\n\n");
+		printf("\nPlease specify serial device and (optionally) speed (default: 19200).\r\n");
+		printf("Usage: openrs <serialPort> <speed> <tnc command>\r\n");
+		printf("Exit with CTRL-C\r\n\r\n");
+		printf("Example:\nopenrs /dev/tty.usb 19200 flash epflash.bin\r\n\r\n");
 		exit(0);
 	}
+
+	cwd = getcwd(NULL, 0);
+	if(cwd==NULL)
+	{
+		perror("Error when calling getcwd.\r\n");
+		exit(1);
+	}
+
+	wd = malloc(strlen(cwd)+1+PATH_MAX);
 
 	tcgetattr(0, &org_termios_console);
 	wrk_termios_console = org_termios_console;
@@ -284,7 +312,7 @@ int main(int argc, char *argv[]) {
 
 
 
-int getcEsc(int data)
+int getcEsc(char data)
 {
 	static int escState = 0;
 	int r;
@@ -298,18 +326,18 @@ int getcEsc(int data)
 	{
 		if(escState)
 		{
-			r=data;
+			r = (unsigned char) data;
 			escState=0;
 		}
 		else
 		{
-			escState=1;
 			if(data!=0x10)
 			{
 				r=-2;
 			}
 			else
 			{
+				escState=1;
 				r=-1;
 			}
 		}
@@ -317,7 +345,8 @@ int getcEsc(int data)
 	}
 	default:
 	{
-		r=data;
+		r = (unsigned char) data;
+		escState=0;
 		break;
 	}
 	}
@@ -343,11 +372,11 @@ void putPort(int data)
 	}while(err==-1 && errno==EAGAIN && errcnt<100);
 	if(errcnt)
 	{
-		fprintf(stderr,"Error writing to serial Port. Discarding some data.\n");
+		fprintf(stderr,"Error writing to serial Port. Discarding some data.\r\n");
 	}
 	if(err==-1 && errno!=EAGAIN)
 	{
-		perror("Unrecoverable Error while writing to serial port. Exiting...\n");
+		perror("Unrecoverable Error while writing to serial port. Exiting...\r\n");
 		exit(errno);
 	}
 }
@@ -375,7 +404,7 @@ void putDwEsc(uint32_t data)
 	for(i=0;i<4;i++)
 	{
 		putcEsc(data>>24);
-		data >>= 8;
+		data <<= 8;
 	}
 }
 
@@ -387,7 +416,7 @@ void putWEsc(uint16_t data)
 	for(i=0;i<2;i++)
 	{
 		putcEsc(data>>8);
-		data >>= 8;
+		data <<= 8;
 	}
 }
 
@@ -420,15 +449,15 @@ void putfiEsc(struct FileInfo * fi)
 		uint16_t i;
 	} ftd;
 
-	putWEsc(htobe16(fi->attr));
+	putWEsc(fi->attr);
 
-	ftd.i = htobe16(((union u_ftdu) (fi->LastWriteDate)).i);
+	ftd.i = ((union u_ftdu) (fi->LastWriteTime)).i;
 	putWEsc(ftd.i);
 
-	ftd.i = htobe16(((union u_ftdu) (fi->LastWriteTime)).i);
+	ftd.i = ((union u_ftdu) (fi->LastWriteDate)).i;
 	putWEsc(ftd.i);
 
-	putDwEsc(htobe32(fi->filesize));
+	putDwEsc(fi->filesize);
 
 	putBufEsc(fi->filename,sizeof(fi->filename));
 }
@@ -440,8 +469,12 @@ void foundFile(struct dirent * dir)
 	struct stat st;
 	struct tm * time;
 	struct FileInfo dirFile;
+	char * name;
 
-	if(stat(dir->d_name, &st))
+	name = malloc(sizeof(dir->d_name)+sizeof(wd));
+	sprintf(name,"%s%s",wd, dir->d_name);
+
+	if(stat(name, &st)==0)
 	{
 		time = localtime(&((st.st_mtimespec).tv_sec));
 		dirFile.LastWriteDate.year = time->tm_year-80;
@@ -451,7 +484,11 @@ void foundFile(struct dirent * dir)
 		dirFile.LastWriteTime.min = time->tm_min;
 		dirFile.LastWriteTime.sek_2 = time->tm_sec / 2;
 
-		dirFile.attr = (st.st_mode == S_IFDIR) ? 0x10 : 0x00;
+		dirFile.attr = 0;
+		if(S_ISDIR(st.st_mode))
+		{
+			dirFile.attr = 0x10;
+		}
 
 		dirFile.filesize = (uint32_t) st.st_size;
 
@@ -460,8 +497,10 @@ void foundFile(struct dirent * dir)
 	else
 	{
 		memset(&dirFile,0,sizeof(dirFile));
+		strncpy(dirFile.filename, dir->d_name, 13);
 	}
 	putfiEsc(&dirFile);
+	free(name);
 }
 
 
@@ -477,20 +516,40 @@ void protocolHandler(char c)
 	static int iArg=0;
 	static DIR * dirp=NULL;
 	static int activeFptr;
+	static int i;
+	static int bc;
+	static int listdir=0;
 
-	int i;
 	int r;
 
 	r=getcEsc(c);
+
+#ifdef DEBUG
+	if(r==-2)
+	{
+		fprintf(stderr,"\r\n%02X\r\n", (uint8_t) c);
+		bc=0;
+	}
+	else
+	if(r>=0)
+	{
+		if(bc++ % 16 == 0)
+		{
+			fprintf(stderr,"\r\n");
+		}
+		fprintf(stderr,"%02hhx ",(uint8_t) c);
+	}
+#endif
 
 	if(r==-1)
 		return;
 
 	if(c==0x02 && r==-2 && state != STATE_IDLE)
 	{
-		fprintf(stderr, "Received request while processing %02x. Aborting.\n",cmd );
+		printf("Received request while processing %02x. Aborting.\r\n",cmd );
 		state = STATE_IDLE;
 		cmd = -1;
+		return;
 	}
 
 
@@ -510,6 +569,7 @@ void protocolHandler(char c)
 			i=0;
 			getArgument = GET_IDLE;
 			iArg++;
+			fprintf(stderr, "Argument 1 (String): %s\r\n", arg_str1);
 		}
 		break;
 	case GET_STRING2:
@@ -526,6 +586,7 @@ void protocolHandler(char c)
 			i=0;
 			getArgument = GET_IDLE;
 			iArg++;
+			fprintf(stderr, "Argument 2 (String): %s\r\n", arg_str2);
 		}
 		break;
 	case GET_DW:
@@ -541,6 +602,7 @@ void protocolHandler(char c)
 				i=0;
 				getArgument = GET_IDLE;
 				iArg++;
+				fprintf(stderr, "\r\nArgument (DWORD): 0x%04x\r\n", arg_dw);
 			}
 		}
 		break;
@@ -557,6 +619,7 @@ void protocolHandler(char c)
 				i=0;
 				getArgument = GET_IDLE;
 				iArg++;
+				fprintf(stderr, "\r\nArgument (WORD): 0x%02x\r\n", arg_w);
 			}
 		}
 		break;
@@ -573,6 +636,7 @@ void protocolHandler(char c)
 				i = 0;
 				getArgument = GET_IDLE;
 				iArg++;
+				fprintf(stderr, "\r\nArgument (FD *): 0x%x\r\n", activeFptr);
 			}
 		}
 		break;
@@ -594,7 +658,7 @@ void protocolHandler(char c)
 		else
 		if(r==-2 && c==2)		// start command
 		{
-			fprintf(stderr, "Preparing for request\n,");
+			fprintf(stderr, "Preparing for request\r\n");
 			state = STATE_GETCMD;
 			iArg = 0;
 		}
@@ -605,55 +669,60 @@ void protocolHandler(char c)
 		if(r>= CMD_FOPEN && r<=CMD_UNGETC)
 		{
 			putPort(0x03);
+			iArg = 0;
+			i = 0;
+			activeFptr = 0;
+			arg_dw = 0;
+			arg_w  = 0;
+			memset(arg_str1,0,sizeof(arg_str1));
+			memset(arg_str2,0,sizeof(arg_str2));
+
 			cmd = r;
 			state = STATE_PROCESS;
+			fprintf(stderr, "Received request 0x%02x.\r\n",cmd);
 			switch(cmd)
 			{
-			case CMD_FOPEN:
-			case CMD_FINDFIRST:
-			case CMD_REMOVE:
-			case CMD_RENAME:
-				state = STATE_PROCESS;
-				getArgument = GET_STRING1;
-				memset(arg_str1,0,sizeof(arg_str1));
-				memset(arg_str2,0,sizeof(arg_str2));
-				break;
-			case CMD_FWRITE:
-			case CMD_FCLOSE:
-			case CMD_FGETC:
-			case CMD_FPUTC:
-			case CMD_FGETS:
-			case CMD_FPUTS:
-			case CMD_FTELL:
-			case CMD_FSEEK:
-				state = STATE_PROCESS;
-				getArgument = GET_FD;
-				i=0;
-				activeFptr = 0;
-				break;
-			case CMD_FREAD:
-				state = STATE_PROCESS;
-				getArgument = GET_DW;
-				i=0;
-				arg_dw = 0;
-				break;
-			case CMD_UNGETC:
-				state = STATE_PROCESS;
-				getArgument = GET_W;
-				i=0;
-				arg_w = 0;
-				break;
-			default:
-				state = STATE_IDLE;
-				cmd = -1;
+				case CMD_FOPEN:
+				case CMD_FINDFIRST:
+				case CMD_REMOVE:
+				case CMD_RENAME:
+					state = STATE_PROCESS;
+					getArgument = GET_STRING1;
+					break;
+				case CMD_FWRITE:
+				case CMD_FCLOSE:
+				case CMD_FGETC:
+				case CMD_FPUTC:
+				case CMD_FGETS:
+				case CMD_FPUTS:
+				case CMD_FTELL:
+				case CMD_FSEEK:
+					state = STATE_PROCESS;
+					getArgument = GET_FD;
+					break;
+				case CMD_FREAD:
+					state = STATE_PROCESS;
+					getArgument = GET_DW;
+					break;
+				case CMD_UNGETC:
+					state = STATE_PROCESS;
+					getArgument = GET_W;
+					break;
+				case CMD_FINDNEXT:
+					break;
+				default:
+					state = STATE_IDLE;
+					cmd = -1;
 			}
 		}
 		else
 		{
-			fprintf(stderr, "Ignoring unknown request 0x%02x\n",r );
+			fprintf(stderr, "Ignoring unknown request 0x%02x\r\n",r );
 			state = STATE_IDLE;
+			break;
 		}
-		break;
+		if(getArgument != GET_IDLE)
+			break;
 	}
 	case STATE_PROCESS:
 	{
@@ -671,17 +740,32 @@ void protocolHandler(char c)
 				struct stat st;
 
 				s=arg_str1;
-				// replace \ by /
-				do
+				while(*s)
 				{
-					s=strchr(arg_str1,'\\');
-					if(s)
-						*s='/';
-				}while(s);
+					*s=tolower(*s);
+					s++;
+				}
+
+				if(strlen(arg_str1)>3)
+				{
+					size_t l = strlen(arg_str1);
+
+					memmove(arg_str1, &arg_str1[3],l-3);
+					arg_str1[l-3]=0;
+				}
+				s=arg_str1;
+				// replace \ by /
+				while((s=strchr(arg_str1,'\\')))
+				{
+					*s='/';
+				};
 
 				s=strrchr(arg_str1,'/');	// restrict access to current directory
 				if(s==NULL)
 					s=arg_str1;
+
+				if((strlen(arg_str1)>1) && (arg_str1[1]==':'))
+					s=&arg_str1[2];
 
 				a=strchr(arg_str2, 'w');
 				if(!a)
@@ -689,21 +773,31 @@ void protocolHandler(char c)
 					a=strchr(arg_str2, 'W');
 				}
 
-				if(stat(s, &st)==0 && (a!=NULL))
+				if((stat(s, &st)==0) && (a!=NULL))
 				{
-					printf("File %s exists. Ignoring 'open for write' request.\n",s);
+					printf("File %s exists. Ignoring 'open for write' request.\r\n",s);
 					activeFptr = 0;
 				}
 				else
 				{
 					activeFptr=fptr;
-					if (File[activeFptr-1] == NULL)
+					if (File[activeFptr-1] != NULL)
 					{
-						File[activeFptr-1] = fopen(s, arg_str2);	// open file
-						printf("File %s opened in mode %s.", s, arg_str2);
+						fclose(File[activeFptr-1]);
+					}
+					FILE * f;
+					f = fopen(s, arg_str2);	// open file
+					if(f)
+					{
+						File[activeFptr-1] = f;
+						printf("File %s opened in mode %s.\r\n", s, arg_str2);
+						bc = 0;
 					}
 					else
+					{
 						activeFptr=0;
+						printf("File %s not found.\r\n", s);
+					}
 				}
 				putDwEsc(activeFptr);
 
@@ -748,25 +842,47 @@ void protocolHandler(char c)
 		}
 		case CMD_FWRITE:
 		{
+			// begin processing with first data byte (the next one)
+			if(i==0)
+			{
+				i++;
+				break;
+			}
+
 			if(r==-2)
 			{
 				if(c!=3)
 				{
-					printf("Protocol exception: Received 0x02 during fwrite. Halting operation.\n");
+					fprintf(stderr,"\r\n-x-\r\n");
+					printf("Protocol exception: Received 0x02 during fwrite. Halting operation.\r\n");
+				}
+				else
+				{
+					fprintf(stderr,"\r\n---\r\n");
 				}
 				state = STATE_IDLE;
 			}
 			else
 			{
-				fputc(r, File[activeFptr-1]);
+				if(File[activeFptr-1])
+				{
+					fputc(r, File[activeFptr-1]);
+				}
 			}
 			break;
 		}
 		case CMD_FGETC:
 		{
 			int c;
-			c=fgetc(File[activeFptr-1]);
-			putWEsc((uint16_t)c);
+			if(File[activeFptr-1])
+			{
+				c=fgetc(File[activeFptr-1]);
+				putWEsc((uint16_t)c);
+			}
+			else
+			{
+				putWEsc(EOF);
+			}
 			state = STATE_IDLE;
 			break;
 		}
@@ -796,7 +912,7 @@ void protocolHandler(char c)
 			{
 				char cbuf[4096];
 
-				if(arg_w >4096)
+				if((arg_w > 4096) || (File[activeFptr-1]==NULL))
 				{
 					putWEsc(0);
 				}
@@ -825,7 +941,14 @@ void protocolHandler(char c)
 			else
 			{
 				int res;
-				res = fputs(arg_str1, File[activeFptr-1]);
+				if(File[activeFptr-1])
+				{
+					res = fputs(arg_str1, File[activeFptr-1]);
+				}
+				else
+				{
+					res = EOF;
+				}
 				putWEsc((uint16_t)res);
 				state = STATE_IDLE;
 			}
@@ -840,20 +963,82 @@ void protocolHandler(char c)
 			else
 			{
 				struct dirent * dir;
+				char * cc;
+				char * cd;
+
+				listdir=0;
 
 				if(dirp)
 					closedir(dirp);
 
-				dirp = opendir(".");
-				if(dirp && (dir = readdir(dirp)))
+				if(strlen(arg_str1)>3)
 				{
-					dir = readdir(dirp);
-					putWEsc(0);
-					foundFile(dir);
+					cc = &arg_str1[3];
+				}
+				else
+					cc = arg_str1;
+
+				while((cd = strchr(cc,'\\') ))
+				{
+					*cd = '/';
+				}
+
+				cd = strstr(cc,"*.*");
+				if(cd)
+				{
+					// list directory
+					*cd = 0;
+					listdir = 1;
+				}
+
+				if(listdir)
+				{
+					sprintf(wd,"%s/%s",cwd,cc);
+					dirp = opendir(wd);
+					if(dirp && (dir = readdir(dirp)))
+					{
+						putWEsc(0);
+						foundFile(dir);
+					}
+					else
+					{
+						putWEsc(-1);
+					}
 				}
 				else
 				{
-					putWEsc(-1);
+					struct stat st;
+					struct tm * time;
+					struct FileInfo dirFile;
+
+					memset(&dirFile,0,sizeof(dirFile));
+
+					if( (stat(cc, &st)==0) && (!S_ISDIR(st.st_mode)))
+					{
+						time = localtime(&((st.st_mtimespec).tv_sec));
+						dirFile.LastWriteDate.year = time->tm_year-80;
+						dirFile.LastWriteDate.month = time->tm_mon+1;
+						dirFile.LastWriteDate.day = time->tm_mday;
+						dirFile.LastWriteTime.hour = time->tm_hour;
+						dirFile.LastWriteTime.min = time->tm_min;
+						dirFile.LastWriteTime.sek_2 = time->tm_sec / 2;
+
+						dirFile.attr = 0;
+						if(S_ISDIR(st.st_mode))
+						{
+							dirFile.attr = 0x10;
+						}
+
+						dirFile.filesize = (uint32_t) st.st_size;
+
+						strncpy(dirFile.filename, arg_str1, 13);
+						putWEsc(0);
+						putfiEsc(&dirFile);
+					}
+					else
+					{
+						putWEsc(-1);
+					}
 				}
 				state = STATE_IDLE;
 			}
@@ -863,7 +1048,7 @@ void protocolHandler(char c)
 		{
 			struct dirent * dir;
 
-			if((dir = readdir(dirp)))
+			if(listdir && (dir = readdir(dirp)))
 			{
 				putWEsc(0);
 				foundFile(dir);
@@ -871,15 +1056,19 @@ void protocolHandler(char c)
 			else
 			{
 				putWEsc(-1);
-				closedir(dirp);
+				if(dirp)
+				{
+					closedir(dirp);
+					dirp=NULL;
+				}
 			}
 			state = STATE_IDLE;
 			break;
 		}
 		case CMD_REMOVE:
 		{
-			fprintf(stderr,"Request to remove file ignored. (unimplemented)\n.");
-			fprintf(stderr,"Please remove %s manually\n",arg_str1);
+			fprintf(stderr,"Request to remove file ignored. (unimplemented)\r\n.");
+			fprintf(stderr,"Please remove %s manually\r\n",arg_str1);
 			state = STATE_IDLE;
 			break;
 		}
@@ -890,15 +1079,22 @@ void protocolHandler(char c)
 			}
 			else
 			{
-				fprintf(stderr,"Request to rename file ignored. (unimplemented)\n.");
-				fprintf(stderr,"Please rename\n%s\nmanually to\n%s\n",arg_str1, arg_str2);
+				fprintf(stderr,"Request to rename file ignored. (unimplemented)\r\n.");
+				fprintf(stderr,"Please rename\r\n%s\nmanually to\r\n%s\r\n",arg_str1, arg_str2);
 				state = STATE_IDLE;
 			}
 			break;
 		case CMD_FTELL:
 		{
 			long l;
-			l = ftell(File[activeFptr-1]);
+			if(File[activeFptr-1])
+			{
+				l = ftell(File[activeFptr-1]);
+			}
+			else
+			{
+				l = -1;
+			}
 			putDwEsc((uint32_t) l);
 			state = STATE_IDLE;
 			break;
@@ -916,7 +1112,14 @@ void protocolHandler(char c)
 			}
 			else
 			{
-				putWEsc((uint16_t) fseek(File[activeFptr-1], arg_dw, arg_w));
+				if(File[activeFptr-1])
+				{
+					putWEsc((uint16_t) fseek(File[activeFptr-1], arg_dw, arg_w));
+				}
+				else
+				{
+					putWEsc(EOF);
+				}
 				state = STATE_IDLE;
 			}
 			break;
@@ -929,14 +1132,21 @@ void protocolHandler(char c)
 			}
 			else
 			{
-				putWEsc((uint16_t) ungetc((int)arg_w, File[activeFptr-1]));
+				if(File[activeFptr-1])
+				{
+					putWEsc((uint16_t) ungetc((int)arg_w, File[activeFptr-1]));
+				}
+				else
+				{
+					putWEsc(EOF);
+				}
 				state = STATE_IDLE;
 			}
 			break;
 		}
 		default:
 		{
-			fprintf(stderr,"Ignoring unimplemented request 0x%02x.\n", cmd);
+			fprintf(stderr,"Ignoring unimplemented request 0x%02x.\r\n", cmd);
 			state = STATE_IDLE;
 		}
 		}
@@ -958,8 +1168,8 @@ int openSerial(char * port, int speed)
 	if (iDescriptor == -1)
 	{
 		iError = 2;
-		printf("Error: can't open device %s\n", port);
-		printf("       (%s)\n", strerror(errno));
+		printf("Error: can't open device %s\r\n", port);
+		printf("       (%s)\r\n", strerror(errno));
 	}
 
     /* Einstellungen der seriellen Schnittstelle merken */
@@ -972,8 +1182,8 @@ int openSerial(char * port, int speed)
             if (ioctl(iDescriptor, TIOCGSERIAL, &ser_io) < 0)
             {
                 iError = 3;
-                printf("Error: can't get actual settings for device %s\n", port);
-                printf("       (%s)\n", strerror(errno));
+                printf("Error: can't get actual settings for device %s\r\n", port);
+                printf("       (%s)\r\n", strerror(errno));
             }
         }
 #endif
@@ -1003,16 +1213,16 @@ int openSerial(char * port, int speed)
             if (cfsetispeed(&(wrk_termios), speed) == -1)
             {
                 iError = 4;
-                printf("Error: can't set input bitrate on %s\n", port);
-                printf("       (%s)\n", strerror(errno));
+                printf("Error: can't set input bitrate on %s\r\n", port);
+                printf("       (%s)\r\n", strerror(errno));
             }
 
             /* Empfangsparameter setzen */
             if (cfsetospeed(&(wrk_termios), speed) == -1)
             {
                 iError = 4;
-                printf("Error: can't set output bitrate on %s\n", port);
-                printf("       (%s)\n", strerror(errno));
+                printf("Error: can't set output bitrate on %s\r\n", port);
+                printf("       (%s)\r\n", strerror(errno));
             }
 #ifndef __APPLE__
             if (speed == B38400)              /* wenn >= 38400 Bd     */
@@ -1023,8 +1233,8 @@ int openSerial(char * port, int speed)
                 if (ioctl(NewRing->iDescriptor, TIOCSSERIAL, &ser_io) < 0)
                 {
                     iError = 4;
-                    printf("Error: can't set device settings on port %s\n", port);
-                    printf("       (%s)\n", strerror(errno));
+                    printf("Error: can't set device settings on port %s\r\n", port);
+                    printf("       (%s)\r\n", strerror(errno));
                 }
             }
 #endif
