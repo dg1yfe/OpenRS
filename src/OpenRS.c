@@ -19,7 +19,6 @@
 #include <sys/select.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/syslimits.h>
 #include <dirent.h>
 #include <errno.h>
 #include <time.h>
@@ -250,6 +249,10 @@ int main(int argc, char *argv[]) {
 		printf("\nPlease specify serial device and (optionally) speed (default: 19200).\r\n");
 		printf("Usage: openrs <serialPort> <speed> <tnc command>\r\n");
 		printf("Exit with CTRL-C\r\n\r\n");
+		printf("!!! Use DOS/Windows style drive letters as prefix to read from TNC to a local file\n\r");
+		printf("    otherwise the TNC will not initiate the transfer.\n\r");
+		printf("The drive letter will be stripped and the file placed in the current directory.\r\n");
+		printf("Example:\nopenrs /dev/tty.usb 19200 cp r:dip1.scr c:dip1.scr\r\n\r\n");
 		printf("Example:\nopenrs /dev/tty.usb 19200 flash epflash.bin\r\n\r\n");
 		exit(0);
 	}
@@ -524,7 +527,7 @@ void foundFile(struct dirent * dir)
 }
 
 
-int sanitizePath(char * dirtyPath, char * cleanPath, int cleanPathMaxLen)
+int sanitizePath(char * dirtyPath, char * cleanPath, size_t cleanPathMaxLen)
 {
 	char * s;
 	char * d;
@@ -532,7 +535,7 @@ int sanitizePath(char * dirtyPath, char * cleanPath, int cleanPathMaxLen)
 	int dplen;
 	int len = 0;
 
-	if(cleanPathMaxLen == 0)
+	if(cleanPathMaxLen < 1)
 		return -1;
 
 	dplen = strlen(dirtyPath);
@@ -550,7 +553,9 @@ int sanitizePath(char * dirtyPath, char * cleanPath, int cleanPathMaxLen)
 
 	d = cleanPath;
 	s = dirtyPath;
-	strncpy(d,s,cleanPathMaxLen);
+	strncpy(d,s,cleanPathMaxLen-1);
+	// ensure string is terminated
+	d[cleanPathMaxLen-1]=0;
 
 	// replace \ by /
 	while((c = strchr(d,'\\') ))
@@ -903,6 +908,7 @@ void protocolHandler(char c)
 				char * s;
 				char * a=NULL;
 				struct stat st;
+				char local_path[PATH_MAX];
 
 				s=arg_str1;
 				while(*s)
@@ -911,26 +917,14 @@ void protocolHandler(char c)
 					s++;
 				}
 
-				if(strlen(arg_str1)>3)
-				{
-					size_t l = strlen(arg_str1);
+				sanitizePath(arg_str1,local_path, sizeof local_path);
+				fprintf(stderr, "Sanitized Path: %s\r\n", local_path);
 
-					memmove(arg_str1, &arg_str1[3],l-3);
-					arg_str1[l-3]=0;
-				}
-				s=arg_str1;
-				// replace \ by /
-				while((s=strchr(arg_str1,'\\')))
-				{
-					*s='/';
-				};
-
-				s=strrchr(arg_str1,'/');	// restrict access to current directory
+				s=strrchr(local_path,'/');	// restrict access to current directory
 				if(s==NULL)
-					s=arg_str1;
+					s=local_path;
 
-				if((strlen(arg_str1)>1) && (arg_str1[1]==':'))
-					s=&arg_str1[2];
+				fprintf(stderr, "restricted path: %s\r\n", s);
 
 				a=strchr(arg_str2, 'w');
 				if(!a)
@@ -963,7 +957,8 @@ void protocolHandler(char c)
 					else
 					{
 						activeFptr=0;
-						printf("File %s not found.\r\n", s);
+						printf("File open error for %s:\r\n", s);
+						printf("%s\n\r",strerror(errno));
 					}
 				}
 				putDwEsc(activeFptr);
