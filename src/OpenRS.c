@@ -26,6 +26,7 @@
 #include <ctype.h>
 
 #ifdef __APPLE__
+#include <sys/syslimits.h>
 	#define htobe16(x)      ((u_int16_t)htons((u_int16_t)(x)))
 	#define htobe32(x)      ((u_int32_t)htonl((u_int32_t)(x)))
 #else
@@ -818,7 +819,11 @@ void protocolHandler(char c)
 	case STATE_IDLE:
 	{
 		if(r>=0){
-			if(write((stdout)->_fileno,&r,1) != 1) 		// print character in console
+#ifndef __APPLE__
+			if(write((stdout)->_fileno,&r,1) != 1) 	// print character in console
+#else
+				if(write((stdout)->_file,&r,1) != 1) // print character in console
+#endif
 			{
 				fprintf(stderr, "Error writing to STDOUT.\r\n");
 				exit(errno);
