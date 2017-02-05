@@ -32,6 +32,10 @@
 	#include <endian.h>
 #endif
 
+#ifdef __linux__
+#include <linux/serial.h>
+#endif
+
 #define DEFAULT_BITRATE 19200;
 
 enum {CMD_FOPEN, CMD_FREAD, CMD_FWRITE, CMD_FCLOSE,
@@ -394,6 +398,7 @@ void putcEsc(int data)
 	//no break -> escape, then data
 	default:
 		putPort(data);
+		break;
 	}
 }
 
@@ -477,7 +482,11 @@ void foundFile(struct dirent * dir)
 
 	if(stat(name, &st)==0)
 	{
+#ifndef __APPLE__
+		time = localtime(&((st.st_mtim).tv_sec));
+#else
 		time = localtime(&((st.st_mtimespec).tv_sec));
+#endif
 		dirFile.LastWriteDate.year = time->tm_year-80;
 		dirFile.LastWriteDate.month = time->tm_mon+1;
 		dirFile.LastWriteDate.day = time->tm_mday;
@@ -542,9 +551,10 @@ int sanitizePath(char * dirtyPath, char * cleanPath, int cleanPathMaxLen)
 	// remove drive & :
 	if( (c=strchr(d,':')) )
 	{
-		if(c-d<3)
+		len = c-d;
+		if(len<3)
 		{
-			memmove(d,c+1,cleanPathMaxLen-c-1);
+			memmove(d,c+1,cleanPathMaxLen-len-1);
 		}
 	}
 	return 0;
@@ -654,7 +664,9 @@ void protocolHandler(char c)
 	static DIR * dirp=NULL;
 	static int activeFptr;
 	static int i;
+#ifdef DEBUG
 	static int bc;
+#endif
 	static int listdir=0;
 
 	int r;
@@ -929,7 +941,9 @@ void protocolHandler(char c)
 					{
 						File[activeFptr-1] = f;
 						printf("File %s opened in mode %s.\r\n", s, arg_str2);
+#ifdef DEBUG
 						bc = 0;
+#endif
 					}
 					else
 					{
@@ -1153,7 +1167,11 @@ void protocolHandler(char c)
 
 					if( (stat(cc, &st)==0) && (!S_ISDIR(st.st_mode)))
 					{
+#ifndef __APPLE__
+						time = localtime(&((st.st_mtim).tv_sec));
+#else
 						time = localtime(&((st.st_mtimespec).tv_sec));
+#endif
 						dirFile.LastWriteDate.year = time->tm_year-80;
 						dirFile.LastWriteDate.month = time->tm_mon+1;
 						dirFile.LastWriteDate.day = time->tm_mday;
@@ -1286,8 +1304,10 @@ void protocolHandler(char c)
 		{
 			fprintf(stderr,"Ignoring unimplemented request 0x%02x.\r\n", cmd);
 			state = STATE_IDLE;
+			break;
 		}
 		}
+		break;
 	}
 	}
 }
@@ -1296,9 +1316,6 @@ void protocolHandler(char c)
 int openSerial(char * port, int speed)
 {
 	int iError;
-#ifndef __APPLE__
-    struct  serial_struct ser_io;
-#endif
 
 	iError = 0;
     /* Seriellen Port fuer Ein- und Ausgabe oeffnen */
@@ -1308,24 +1325,68 @@ int openSerial(char * port, int speed)
 		iError = 2;
 		printf("Error: can't open device %s\r\n", port);
 		printf("       (%s)\r\n", strerror(errno));
+		return iError;
 	}
 
     /* Einstellungen der seriellen Schnittstelle merken */
     if (iError == 0) /* nur wenn Port geoeffnet worden ist */
     {
         tcgetattr(iDescriptor, &org_termios);
-#ifndef __APPLE__
-        if (speed == B38400)                        /* >= 38400 Bd  */
-        {
-            if (ioctl(iDescriptor, TIOCGSERIAL, &ser_io) < 0)
-            {
-                iError = 3;
-                printf("Error: can't get actual settings for device %s\r\n", port);
-                printf("       (%s)\r\n", strerror(errno));
-            }
-        }
-#endif
     }
+
+#if !(defined _HAVE_STRUCT_TERMIOS_C_ISPEED && defined _HAVE_STRUCT_TERMIOS_C_OSPEED)
+    switch(speed){
+    case 50 :
+    	speed = B50;
+    	break;
+    case 75 :
+    	speed = B75;
+    	break;
+    case 110:
+    	speed = B110;
+    	break;
+    case 134:
+    	speed = B134;
+    	break;
+    case 150:
+    	speed = B150;
+    	break;
+    case 200:
+    	speed = B200;
+    	break;
+    case 300:
+    	speed = B300;
+    	break;
+    case 600:
+    	speed = B600;
+    	break;
+    case 1200:
+    	speed = B1200;
+    	break;
+    case 1800:
+    	speed = B1800;
+    	break;
+    case 2400:
+    	speed = B2400;
+    	break;
+    case 4800:
+    	speed = B4800;
+    	break;
+    case 9600:
+    	speed = B9600;
+    	break;
+    case 19200:
+    	speed = B19200;
+    	break;
+    case 38400:
+    	speed = B38400;
+	break;
+    default:
+    	fprintf(stderr,"Baudrate not supported by this build of OpenRS.\n\rTry one of the standard Baudrates (e.g. 19200)");
+    	iError = 4;
+    	return iError;
+    }
+#endif
 
     /* Neue Einstellungen der seriellen Schnittstelle setzen */
     if (iError == 0)
@@ -1340,14 +1401,21 @@ int openSerial(char * port, int speed)
                 				|CREAD      /* RX ein               */
                 				|CLOCAL);   /* kein Handshake       */
 
+#if defined _HAVE_STRUCT_TERMIOS_C_ISPEED && defined _HAVE_STRUCT_TERMIOS_C_OSPEED
+        wrk_termios.c_cflag &= ~(CBAUD);   	/* Custom Baudrate		*/
+#endif
         wrk_termios.c_cflag &= ~(CSTOPB     /* 1 Stop-Bit           */
                 				|PARENB    	/* ohne Paritaet        */
                 				|HUPCL);   	/* kein Handshake       */
 
         /* pty verwenden ? */
         if (speed != B0)                    /* B0 -> pty soll ver-  */
-        {                                         /* wendet werden        */
-            /* Empfangsparameter setzen */
+        {                                   /* wendet werden        */
+#if defined _HAVE_STRUCT_TERMIOS_C_ISPEED && defined _HAVE_STRUCT_TERMIOS_C_OSPEED
+            wrk_termios.c_ispeed = speed;
+            wrk_termios.c_ospeed = speed;
+#else
+        	/* Empfangsparameter setzen */
             if (cfsetispeed(&(wrk_termios), speed) == -1)
             {
                 iError = 4;
@@ -1361,19 +1429,6 @@ int openSerial(char * port, int speed)
                 iError = 4;
                 printf("Error: can't set output bitrate on %s\r\n", port);
                 printf("       (%s)\r\n", strerror(errno));
-            }
-#ifndef __APPLE__
-            if (speed == B38400)              /* wenn >= 38400 Bd     */
-            {
-                ser_io.flags &= ~ASYNC_SPD_MASK;      /* Speed-Flag -> 0      */
-                ser_io.flags |= speedflag;      /* Speed-Flag setzen    */
-
-                if (ioctl(NewRing->iDescriptor, TIOCSSERIAL, &ser_io) < 0)
-                {
-                    iError = 4;
-                    printf("Error: can't set device settings on port %s\r\n", port);
-                    printf("       (%s)\r\n", strerror(errno));
-                }
             }
 #endif
         }
