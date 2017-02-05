@@ -286,10 +286,19 @@ int main(int argc, char *argv[]) {
     	if(dataAvailable(0))
     	{
     		int ch;
+    		int retries=0;
+
     		ch=getch();
     		if(ch==0x03)		// exit on CTRL-C
     			break;
-    		write(iDescriptor,&ch,1);
+
+			while(write(iDescriptor,&ch,1)!= 1){
+				usleep(500* ++retries);
+				if(retries==5){
+					fprintf(stderr,"Error writing to serial port.\n\r");
+					exit(errno);
+				}
+			}
     	}
     	else
     	{
@@ -802,8 +811,13 @@ void protocolHandler(char c)
 	{
 	case STATE_IDLE:
 	{
-		if(r>=0)
-			write(1,&r,1);		// print character in console
+		if(r>=0){
+			if(write((stdout)->_fileno,&r,1) != 1) 		// print character in console
+			{
+				fprintf(stderr, "Error writing to STDOUT.\r\n");
+				exit(errno);
+			}
+		}
 		else
 		if(r==-2 && c==2)		// start command
 		{
