@@ -19,6 +19,7 @@
 #include <sys/select.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/syslimits.h>
 #include <dirent.h>
 #include <errno.h>
 #include <time.h>
@@ -542,9 +543,10 @@ int sanitizePath(char * dirtyPath, char * cleanPath, int cleanPathMaxLen)
 	// remove drive & :
 	if( (c=strchr(d,':')) )
 	{
-		if(c-d<3)
+		len=c-d;
+		if(len<3)
 		{
-			memmove(d,c+1,cleanPathMaxLen-c-1);
+			memmove(d,c+1,cleanPathMaxLen-len-1);
 		}
 	}
 	return 0;
