@@ -1363,7 +1363,8 @@ int openSerial(char * port, int speed)
         tcgetattr(iDescriptor, &org_termios);
     }
 
-#if !(defined _HAVE_STRUCT_TERMIOS_C_ISPEED && defined _HAVE_STRUCT_TERMIOS_C_OSPEED)
+    /* c_ispeed/c_ospeed are ignored by tcsetattr() on Linux,
+       always use the Bxxx constants with cfsetispeed/cfsetospeed */
     switch(speed){
     case 50 :
     	speed = B50;
@@ -1409,13 +1410,22 @@ int openSerial(char * port, int speed)
     	break;
     case 38400:
     	speed = B38400;
-	break;
+    	break;
+#ifdef B57600
+    case 57600:
+    	speed = B57600;
+    	break;
+#endif
+#ifdef B115200
+    case 115200:
+    	speed = B115200;
+    	break;
+#endif
     default:
     	fprintf(stderr,"Baudrate not supported by this build of OpenRS.\n\rTry one of the standard Baudrates (e.g. 19200)");
     	iError = 4;
     	return iError;
     }
-#endif
 
     /* Neue Einstellungen der seriellen Schnittstelle setzen */
     if (iError == 0)
@@ -1430,9 +1440,6 @@ int openSerial(char * port, int speed)
                 				|CREAD      /* RX ein               */
                 				|CLOCAL);   /* kein Handshake       */
 
-#if defined _HAVE_STRUCT_TERMIOS_C_ISPEED && defined _HAVE_STRUCT_TERMIOS_C_OSPEED
-        wrk_termios.c_cflag &= ~(CBAUD);   	/* Custom Baudrate		*/
-#endif
         wrk_termios.c_cflag &= ~(CSTOPB     /* 1 Stop-Bit           */
                 				|PARENB    	/* ohne Paritaet        */
                 				|HUPCL);   	/* kein Handshake       */
@@ -1440,10 +1447,6 @@ int openSerial(char * port, int speed)
         /* pty verwenden ? */
         if (speed != B0)                    /* B0 -> pty soll ver-  */
         {                                   /* wendet werden        */
-#if defined _HAVE_STRUCT_TERMIOS_C_ISPEED && defined _HAVE_STRUCT_TERMIOS_C_OSPEED
-            wrk_termios.c_ispeed = speed;
-            wrk_termios.c_ospeed = speed;
-#else
         	/* Empfangsparameter setzen */
             if (cfsetispeed(&(wrk_termios), speed) == -1)
             {
@@ -1459,7 +1462,6 @@ int openSerial(char * port, int speed)
                 printf("Error: can't set output bitrate on %s\r\n", port);
                 printf("       (%s)\r\n", strerror(errno));
             }
-#endif
         }
     }
 
