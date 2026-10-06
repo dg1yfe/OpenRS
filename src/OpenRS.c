@@ -1327,7 +1327,7 @@ void protocolHandler(char c)
 			{
 				if(getFile(activeFptr))
 				{
-					putWEsc((uint16_t) fseek(getFile(activeFptr), arg_dw, arg_w));
+					putWEsc((uint16_t) fseek(getFile(activeFptr), (long)(int32_t) arg_dw, arg_w));
 				}
 				else
 				{
