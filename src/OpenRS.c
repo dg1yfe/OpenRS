@@ -928,6 +928,8 @@ void protocolHandler(char c)
 				s=strrchr(local_path,'/');	// restrict access to current directory
 				if(s==NULL)
 					s=local_path;
+				else
+					s++;
 
 				fprintf(stderr, "restricted path: %s\r\n", s);
 
