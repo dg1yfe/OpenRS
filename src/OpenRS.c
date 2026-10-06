@@ -1266,7 +1266,7 @@ void protocolHandler(char c)
 		{
 			struct dirent * dir;
 
-			if(listdir && (dir = readdir(dirp)))
+			if(listdir && dirp && (dir = readdir(dirp)))
 			{
 				putWEsc(0);
 				foundFile(dir);
