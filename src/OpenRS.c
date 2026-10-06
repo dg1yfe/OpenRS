@@ -667,6 +667,15 @@ int findNext(void)
 */
 
 
+/* map TNC file handle (1..MAXFPTR) to FILE *, NULL if invalid or not open */
+FILE * getFile(int fd)
+{
+	if(fd<1 || fd>MAXFPTR)
+		return NULL;
+	return File[fd-1];
+}
+
+
 void protocolHandler(char c)
 {
 	static int state = STATE_IDLE;
@@ -950,6 +959,7 @@ void protocolHandler(char c)
 					if (File[activeFptr-1] != NULL)
 					{
 						fclose(File[activeFptr-1]);
+						File[activeFptr-1] = NULL;
 					}
 					FILE * f;
 					f = fopen(s, arg_str2);	// open file
@@ -979,7 +989,16 @@ void protocolHandler(char c)
 		case CMD_FCLOSE:
 		{
 			int res;
-			res=fclose(File[activeFptr-1]);
+			FILE * f = getFile(activeFptr);
+			if(f)
+			{
+				res=fclose(f);
+				File[activeFptr-1] = NULL;
+			}
+			else
+			{
+				res=EOF;
+			}
 			putWEsc((uint16_t) res);
 			state = STATE_IDLE;
 			break;
@@ -987,15 +1006,17 @@ void protocolHandler(char c)
 		case CMD_FREAD:
 		{
 			int d;
+			FILE * f;
 			if(iArg==1)
 			{
 				getArgument = GET_FD;
 			}
 			else
 			{
+				f = getFile(activeFptr);
 				while(arg_dw--)
 				{
-					d=fgetc(File[activeFptr-1]);
+					d = f ? fgetc(f) : EOF;
 					if(d!=EOF)
 					{
 						putcEsc(d);
@@ -1033,9 +1054,9 @@ void protocolHandler(char c)
 			}
 			else
 			{
-				if(File[activeFptr-1])
+				if(getFile(activeFptr))
 				{
-					fputc(r, File[activeFptr-1]);
+					fputc(r, getFile(activeFptr));
 				}
 			}
 			break;
@@ -1043,9 +1064,9 @@ void protocolHandler(char c)
 		case CMD_FGETC:
 		{
 			int c;
-			if(File[activeFptr-1])
+			if(getFile(activeFptr))
 			{
-				c=fgetc(File[activeFptr-1]);
+				c=fgetc(getFile(activeFptr));
 				putWEsc((uint16_t)c);
 			}
 			else
@@ -1065,7 +1086,14 @@ void protocolHandler(char c)
 			{
 				int res;
 
-				res=fputc((int) arg_w, File[activeFptr-1]);
+				if(getFile(activeFptr))
+				{
+					res=fputc((int) arg_w, getFile(activeFptr));
+				}
+				else
+				{
+					res=EOF;
+				}
 				putWEsc((uint16_t)res);
 				state = STATE_IDLE;
 			}
@@ -1081,13 +1109,13 @@ void protocolHandler(char c)
 			{
 				char cbuf[4096];
 
-				if((arg_w > 4096) || (File[activeFptr-1]==NULL))
+				if((arg_w > 4096) || (getFile(activeFptr)==NULL))
 				{
 					putWEsc(0);
 				}
 				else
 				{
-					if(fgets(cbuf, (int) arg_w, File[activeFptr-1]))
+					if(fgets(cbuf, (int) arg_w, getFile(activeFptr)))
 					{
 						putWEsc(1);
 						putsEsc(cbuf);
@@ -1110,9 +1138,9 @@ void protocolHandler(char c)
 			else
 			{
 				int res;
-				if(File[activeFptr-1])
+				if(getFile(activeFptr))
 				{
-					res = fputs(arg_str1, File[activeFptr-1]);
+					res = fputs(arg_str1, getFile(activeFptr));
 				}
 				else
 				{
@@ -1272,9 +1300,9 @@ void protocolHandler(char c)
 		case CMD_FTELL:
 		{
 			long l;
-			if(File[activeFptr-1])
+			if(getFile(activeFptr))
 			{
-				l = ftell(File[activeFptr-1]);
+				l = ftell(getFile(activeFptr));
 			}
 			else
 			{
@@ -1297,9 +1325,9 @@ void protocolHandler(char c)
 			}
 			else
 			{
-				if(File[activeFptr-1])
+				if(getFile(activeFptr))
 				{
-					putWEsc((uint16_t) fseek(File[activeFptr-1], arg_dw, arg_w));
+					putWEsc((uint16_t) fseek(getFile(activeFptr), arg_dw, arg_w));
 				}
 				else
 				{
@@ -1317,9 +1345,9 @@ void protocolHandler(char c)
 			}
 			else
 			{
-				if(File[activeFptr-1])
+				if(getFile(activeFptr))
 				{
-					putWEsc((uint16_t) ungetc((int)arg_w, File[activeFptr-1]));
+					putWEsc((uint16_t) ungetc((int)arg_w, getFile(activeFptr)));
 				}
 				else
 				{
