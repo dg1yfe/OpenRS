@@ -1124,8 +1124,8 @@ void protocolHandler(char c)
 					{
 						putWEsc(0);
 					}
-					state = STATE_IDLE;
 				}
+				state = STATE_IDLE;
 			}
 			break;
 		}
