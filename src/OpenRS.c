@@ -491,7 +491,12 @@ void foundFile(struct dirent * dir)
 	struct FileInfo dirFile;
 	char * name;
 
-	name = malloc(sizeof(dir->d_name)+sizeof(wd));
+	name = malloc(strlen(wd)+strlen(dir->d_name)+1);
+	if(name==NULL)
+	{
+		perror("Error allocating memory.\r\n");
+		exit(1);
+	}
 	sprintf(name,"%s%s",wd, dir->d_name);
 
 	if(stat(name, &st)==0)
@@ -732,7 +737,7 @@ void protocolHandler(char c)
 	case GET_STRING1:
 		if(r!=-2)
 		{
-			if(strlen(arg_str1)<(1+sizeof(arg_str1)) )
+			if(strlen(arg_str1)<(sizeof(arg_str1)-1) )
 			{
 				char c = (char) r;
 				strncat(arg_str1, &c,1);
@@ -749,7 +754,7 @@ void protocolHandler(char c)
 	case GET_STRING2:
 		if(r!=-2)
 		{
-			if(strlen(arg_str2)<(1+sizeof(arg_str2)) )
+			if(strlen(arg_str2)<(sizeof(arg_str2)-1) )
 			{
 				char c = (char) r;
 				strncat(arg_str2, &c,1);
