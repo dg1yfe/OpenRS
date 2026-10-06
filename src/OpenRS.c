@@ -1130,25 +1130,31 @@ void protocolHandler(char c)
 			else
 			{
 				struct dirent * dir;
+				char local_path[PATH_MAX];
 				char * cc;
 				char * cd;
 
 				listdir=0;
 
 				if(dirp)
+				{
 					closedir(dirp);
-
-				if(strlen(arg_str1)>3)
-				{
-					cc = &arg_str1[3];
+					dirp=NULL;
 				}
-				else
-					cc = arg_str1;
 
-				while((cd = strchr(cc,'\\') ))
+				// strip drive letter (if any) and replace \ by /
+				if(sanitizePath(arg_str1, local_path, sizeof local_path))
 				{
-					*cd = '/';
+					local_path[0]=0;
 				}
+
+				// path is relative to current directory
+				cc = local_path;
+				while(*cc=='/')
+				{
+					cc++;
+				}
+				fprintf(stderr, "Sanitized Path: %s\r\n", cc);
 
 				cd = strstr(cc,"*.*");
 				if(cd)
@@ -1180,6 +1186,12 @@ void protocolHandler(char c)
 
 					memset(&dirFile,0,sizeof(dirFile));
 
+					cd=strrchr(cc,'/');	// restrict access to current directory
+					if(cd)
+					{
+						cc=cd+1;
+					}
+
 					if( (stat(cc, &st)==0) && (!S_ISDIR(st.st_mode)))
 					{
 #ifndef __APPLE__
@@ -1202,7 +1214,7 @@ void protocolHandler(char c)
 
 						dirFile.filesize = (uint32_t) st.st_size;
 
-						strncpy(dirFile.filename, arg_str1, 13);
+						strncpy(dirFile.filename, cc, 13);
 						putWEsc(0);
 						putfiEsc(&dirFile);
 					}
