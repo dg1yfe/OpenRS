@@ -90,6 +90,7 @@ char * wd = NULL;
 
 
 void protocolHandler(char c);
+void putcEsc(int data);
 int openSerial(char * port, int speed, int rtscts);
 
 void restoreState(void)
@@ -148,11 +149,11 @@ int dataAvailable(int iDescriptor)
 int getch()
 {
     int r;
-    int c;
+    unsigned char c;
 
-    if ((r = read(0, &c, sizeof(c))) < 0)
+    if ((r = read(0, &c, 1)) != 1)
     {
-        return r;
+        return -1;
     }
     else
     {
@@ -160,7 +161,7 @@ int getch()
     	{
     		c=0x08;		// replace DEL by BS
     	}
-        return c & 0xff;
+        return c;
     }
 }
 
@@ -311,19 +312,13 @@ int main(int argc, char *argv[]) {
     	if(dataAvailable(0))
     	{
     		int ch;
-    		int retries=0;
 
     		ch=getch();
     		if(ch==0x03)		// exit on CTRL-C
     			break;
 
-			while(write(iDescriptor,&ch,1)!= 1){
-				usleep(500* ++retries);
-				if(retries==5){
-					fprintf(stderr,"Error writing to serial port.\n\r");
-					exit(errno);
-				}
-			}
+    		if(ch>=0)
+    			putcEsc(ch);
     	}
     	else
     	{
@@ -396,6 +391,7 @@ void putPort(int data)
 {
 	int err;
 	int errcnt;
+	unsigned char b = (unsigned char) data;
 
 	err=0;
 	errcnt=0;
@@ -406,7 +402,7 @@ void putPort(int data)
 			usleep(1000);
 			errcnt++;
 		}
-		err=write(iDescriptor,&data,1);
+		err=write(iDescriptor,&b,1);
 	}while(err==-1 && errno==EAGAIN && errcnt<100);
 	if(errcnt)
 	{
