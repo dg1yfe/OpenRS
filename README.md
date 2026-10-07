@@ -15,10 +15,11 @@ Runs on Linux, macOS and Windows.
 
 ### Build and test
 
-    cc -O2 -Wall -o openrs src/*.c
-    python3 tests/protocol_test.py ./openrs
+    make
+    make test
+    make install        # to /usr/local/bin, or PREFIX=...
 
-On Windows, build with MinGW (`gcc -O2 -o openrs.exe src/*.c`). The tests play the TNC side of the protocol over a pseudo terminal, so no TNC is needed; they run on Linux and macOS, and against a Windows build under wine (`python3 tests/protocol_test.py openrs.exe wine`).
+On Windows, use MinGW (`mingw32-make`). Without make: `cc -O2 -Wall -o openrs src/*.c`. The tests play the TNC side of the protocol over a pseudo terminal, so no TNC is needed; they run on Linux and macOS, and against a Windows build under wine (`make test EXE=.exe RUNNER=wine`). The Makefile header shows how to cross-compile.
 
 ----
 
