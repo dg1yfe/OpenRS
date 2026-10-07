@@ -24,6 +24,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <strings.h>
 
 #ifdef __APPLE__
 #include <sys/syslimits.h>
@@ -689,15 +690,15 @@ int findNext(void)
 */
 
 
-/* map DOS path from TNC to a file name in the current directory */
+/* map DOS path from TNC to a file name in the current directory.
+   Like the TNC file system, lookup is case-insensitive but case-preserving:
+   an existing file is used with its actual spelling (exact match preferred),
+   a new file keeps the spelling sent by the TNC. */
 char * localFileName(char * dosPath, char * buf, size_t len)
 {
 	char * s;
-
-	for(s=dosPath; *s; s++)
-	{
-		*s=tolower((unsigned char) *s);
-	}
+	DIR * d;
+	struct dirent * e;
 
 	if(sanitizePath(dosPath, buf, len))
 	{
@@ -710,6 +711,19 @@ char * localFileName(char * dosPath, char * buf, size_t len)
 		s=buf;
 	else
 		s++;
+
+	if(*s && access(s, F_OK)!=0 && (d=opendir(".")))
+	{
+		while((e=readdir(d)))
+		{
+			if(strcasecmp(e->d_name, s)==0)
+			{
+				memcpy(s, e->d_name, strlen(s));	// same length
+				break;
+			}
+		}
+		closedir(d);
+	}
 
 	fprintf(stderr, "restricted path: %s\r\n", s);
 	return s;
@@ -1247,11 +1261,8 @@ void protocolHandler(char c)
 
 					memset(&dirFile,0,sizeof(dirFile));
 
-					cd=strrchr(cc,'/');	// restrict access to current directory
-					if(cd)
-					{
-						cc=cd+1;
-					}
+					// same name mapping as FOPEN
+					cc=localFileName(arg_str1, local_path, sizeof local_path);
 
 					if( (stat(cc, &st)==0) && (!S_ISDIR(st.st_mode)))
 					{
