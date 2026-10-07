@@ -1469,6 +1469,16 @@ int openSerial(char * port, int speed, int rtscts)
     	speed = B115200;
     	break;
 #endif
+#ifdef B230400
+    case 230400:
+    	speed = B230400;
+    	break;
+#endif
+#ifdef B460800
+    case 460800:
+    	speed = B460800;
+    	break;
+#endif
     default:
     	fprintf(stderr,"Baudrate not supported by this build of OpenRS.\n\rTry one of the standard Baudrates (e.g. 19200)");
     	iError = 4;
