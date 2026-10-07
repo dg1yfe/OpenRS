@@ -11,12 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <limits.h>
 #include <signal.h>
-#include <fcntl.h>
-#include <termios.h>
-#include <sys/select.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -26,17 +22,19 @@
 #include <ctype.h>
 #include <strings.h>
 
-#ifdef __APPLE__
-#include <sys/syslimits.h>
-	#define htobe16(x)      ((u_int16_t)htons((u_int16_t)(x)))
-	#define htobe32(x)      ((u_int32_t)htonl((u_int32_t)(x)))
+#ifdef _WIN32
+#include <direct.h>		// getcwd
+#include <io.h>			// unlink
+#include <fcntl.h>
 #else
-	#include <endian.h>
+#include <unistd.h>
 #endif
 
-#ifdef __linux__
-#include <linux/serial.h>
+#ifdef __APPLE__
+#include <sys/syslimits.h>
 #endif
+
+#include "platform.h"
 
 #define DEFAULT_BITRATE 19200;
 
@@ -76,14 +74,6 @@ struct FileInfo{
 	char		filename[14]; 	// sprintf(&FileInfo.filename,"%-1.13s", Dateiname))
 };
 
-struct termios org_termios;
-struct termios wrk_termios;
-struct termios org_termios_console;
-struct termios wrk_termios_console;
-
-int iDescriptor=-1;
-int iConsoleSettingsModified = 0;
-
 #define MAXFPTR 256
 FILE * File[MAXFPTR];	// since TNC3OS does not support 64 Bit pointers, but
 					// wants to handle "File *" by itself, we do a mapping
@@ -96,22 +86,15 @@ char * wd = NULL;
 
 void protocolHandler(char c);
 void putcEsc(int data);
-int openSerial(char * port, int speed, int rtscts);
 
 void restoreState(void)
 {
 	int i;
 
-    fprintf(stdout,"\n\rExiting...\n\r");
-    if(iDescriptor != -1)
-    {
-    	tcsetattr(iDescriptor, TCSADRAIN, &org_termios);
-    	close(iDescriptor);
-    	iDescriptor = -1;
-    }
-
-    if(iConsoleSettingsModified)
-    	tcsetattr(0, TCSANOW, &org_termios_console);
+	fprintf(stdout,"\n\rExiting...\n\r");
+	fflush(stdout);
+	serialClose();
+	consoleRestore();
 
 	for(i=1;i<=MAXFPTR;i++)
 	{
@@ -141,36 +124,6 @@ void restoreStateSig(int sig)
 }
 
 
-int dataAvailable(int iDescriptor)
-{
-    struct timeval tv = { 0L, 0L };
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(iDescriptor, &fds);
-    return select(iDescriptor+1, &fds, NULL, NULL, &tv);
-}
-
-
-int getch()
-{
-    int r;
-    unsigned char c;
-
-    if ((r = read(0, &c, 1)) != 1)
-    {
-        return -1;
-    }
-    else
-    {
-    	if(c==0x7f)
-    	{
-    		c=0x08;		// replace DEL by BS
-    	}
-        return c;
-    }
-}
-
-
 int main(int argc, char *argv[]) {
 /*
  *
@@ -189,9 +142,10 @@ int main(int argc, char *argv[]) {
 	char port[PATH_MAX];
 	char * command = NULL;
 	int bitrate = DEFAULT_BITRATE;
-	char data[1024];
+	unsigned char data[1024];
 	int i;
 	int rtscts = 0;
+	int consoleOpen = 1;
 
 	// options must precede the positional arguments
 	while(argc > 1 && argv[1][0] == '-')
@@ -294,57 +248,62 @@ int main(int argc, char *argv[]) {
 
 	wd = malloc(strlen(cwd)+1+PATH_MAX);
 
-	tcgetattr(0, &org_termios_console);
-	wrk_termios_console = org_termios_console;
+#ifdef _WIN32
+	_setmode(_fileno(stdout), _O_BINARY);	// messages already end in \r\n
+#endif
 
-    atexit(restoreState);
-    signal(SIGINT,restoreStateSig);
-    signal(SIGTERM,restoreStateSig);
+	atexit(restoreState);
+	signal(SIGINT,restoreStateSig);
+	signal(SIGTERM,restoreStateSig);
 
-    if(openSerial(port, bitrate, rtscts)!=0)
-    {
-    	exit(1);
-    }
+	if(serialOpen(port, bitrate, rtscts)!=0)
+	{
+		exit(1);
+	}
 
-    iConsoleSettingsModified=1;
-    cfmakeraw(&wrk_termios_console);
-    tcsetattr(0, TCSANOW, &wrk_termios_console);
+	consoleRaw();
 
-    fptr = 1;
-    memset(File,0,sizeof(File));
+	fptr = 1;
+	memset(File,0,sizeof(File));
 
-    while(1)
-    {
-    	if(dataAvailable(0))
-    	{
-    		int ch;
+	while(1)
+	{
+		int ch = consoleOpen ? consoleRead() : CONSOLE_NO_KEY;
 
-    		ch=getch();
-    		if(ch==0x03)		// exit on CTRL-C
-    			break;
+		if(ch==CONSOLE_EOF)
+		{
+			consoleOpen = 0;	// keep serving the TNC without a keyboard
+		}
+		else
+		if(ch>=0)
+		{
+			if(ch==0x03)		// exit on CTRL-C
+				break;
+			if(ch==0x7f)
+				ch=0x08;		// replace DEL by BS
+			putcEsc(ch);
+			continue;
+		}
 
-    		if(ch>=0)
-    			putcEsc(ch);
-    	}
-    	else
-    	{
-    		if(dataAvailable(iDescriptor))
-    		{
-    			int j;
+		i=serialRead(data, sizeof(data));
+		if(i<0)
+		{
+			fprintf(stderr, "Error reading from serial port.\r\n");
+			exit(1);
+		}
+		if(i>0)
+		{
+			int j;
 
-    			i=read(iDescriptor, &data,sizeof(data));
-
-    			for(j=0;j<i;j++)
-    			{
-					protocolHandler(data[j]);
-    			}
-
-    			usleep(1000);
-    		}
-    		else
-    			usleep(5000);
-    	}
-    }
+			for(j=0;j<i;j++)
+			{
+				protocolHandler(data[j]);
+			}
+			sleepMs(1);
+		}
+		else
+			sleepMs(5);
+	}
 
 	return EXIT_SUCCESS;
 }
@@ -395,29 +354,10 @@ int getcEsc(char data)
 
 void putPort(int data)
 {
-	int err;
-	int errcnt;
-	unsigned char b = (unsigned char) data;
-
-	err=0;
-	errcnt=0;
-
-	do
+	if(serialWrite((unsigned char) data) < 0)
 	{
-		if(err){
-			usleep(1000);
-			errcnt++;
-		}
-		err=write(iDescriptor,&b,1);
-	}while(err==-1 && errno==EAGAIN && errcnt<100);
-	if(errcnt)
-	{
-		fprintf(stderr,"Error writing to serial Port. Discarding some data.\r\n");
-	}
-	if(err==-1 && errno!=EAGAIN)
-	{
-		perror("Unrecoverable Error while writing to serial port. Exiting...\r\n");
-		exit(errno);
+		fprintf(stderr, "Exiting...\r\n");
+		exit(1);
 	}
 }
 
@@ -525,11 +465,7 @@ void foundFile(struct dirent * dir)
 
 	if(stat(name, &st)==0)
 	{
-#ifndef __APPLE__
-		time = localtime(&((st.st_mtim).tv_sec));
-#else
-		time = localtime(&((st.st_mtimespec).tv_sec));
-#endif
+		time = localtime(&st.st_mtime);
 		dirFile.LastWriteDate.year = time->tm_year-80;
 		dirFile.LastWriteDate.month = time->tm_mon+1;
 		dirFile.LastWriteDate.day = time->tm_mday;
@@ -952,10 +888,8 @@ void protocolHandler(char c)
 	case STATE_IDLE:
 	{
 		if(r>=0){
-			unsigned char ch = (unsigned char) r;
-
 			fflush(stdout);	// keep order with printf() messages
-			if(write(STDOUT_FILENO,&ch,1) != 1) 	// print character in console
+			if(!consoleWrite((unsigned char) r))	// print character in console
 			{
 				fprintf(stderr, "Error writing to STDOUT.\r\n");
 				exit(errno);
@@ -1328,11 +1262,7 @@ void protocolHandler(char c)
 
 					if( (stat(cc, &st)==0) && (!S_ISDIR(st.st_mode)))
 					{
-#ifndef __APPLE__
-						time = localtime(&((st.st_mtim).tv_sec));
-#else
-						time = localtime(&((st.st_mtimespec).tv_sec));
-#endif
+						time = localtime(&st.st_mtime);
 						dirFile.LastWriteDate.year = time->tm_year-80;
 						dirFile.LastWriteDate.month = time->tm_mon+1;
 						dirFile.LastWriteDate.day = time->tm_mday;
@@ -1489,175 +1419,4 @@ void protocolHandler(char c)
 		break;
 	}
 	}
-}
-
-
-int openSerial(char * port, int speed, int rtscts)
-{
-	int iError;
-
-	iError = 0;
-    /* Seriellen Port fuer Ein- und Ausgabe oeffnen */
-	iDescriptor = open(port, O_RDWR);
-	if (iDescriptor == -1)
-	{
-		iError = 2;
-		printf("Error: can't open device %s\r\n", port);
-		printf("       (%s)\r\n", strerror(errno));
-		return iError;
-	}
-
-    /* Einstellungen der seriellen Schnittstelle merken */
-    if (iError == 0) /* nur wenn Port geoeffnet worden ist */
-    {
-        tcgetattr(iDescriptor, &org_termios);
-    }
-
-    /* c_ispeed/c_ospeed are ignored by tcsetattr() on Linux,
-       always use the Bxxx constants with cfsetispeed/cfsetospeed */
-    switch(speed){
-    case 50 :
-    	speed = B50;
-    	break;
-    case 75 :
-    	speed = B75;
-    	break;
-    case 110:
-    	speed = B110;
-    	break;
-    case 134:
-    	speed = B134;
-    	break;
-    case 150:
-    	speed = B150;
-    	break;
-    case 200:
-    	speed = B200;
-    	break;
-    case 300:
-    	speed = B300;
-    	break;
-    case 600:
-    	speed = B600;
-    	break;
-    case 1200:
-    	speed = B1200;
-    	break;
-    case 1800:
-    	speed = B1800;
-    	break;
-    case 2400:
-    	speed = B2400;
-    	break;
-    case 4800:
-    	speed = B4800;
-    	break;
-    case 9600:
-    	speed = B9600;
-    	break;
-    case 19200:
-    	speed = B19200;
-    	break;
-    case 38400:
-    	speed = B38400;
-    	break;
-#ifdef B57600
-    case 57600:
-    	speed = B57600;
-    	break;
-#endif
-#ifdef B115200
-    case 115200:
-    	speed = B115200;
-    	break;
-#endif
-#ifdef B230400
-    case 230400:
-    	speed = B230400;
-    	break;
-#endif
-#ifdef B460800
-    case 460800:
-    	speed = B460800;
-    	break;
-#endif
-    default:
-    	fprintf(stderr,"Baudrate not supported by this build of OpenRS.\n\rTry one of the standard Baudrates (e.g. 19200)");
-    	iError = 4;
-    	return iError;
-    }
-
-    /* Neue Einstellungen der seriellen Schnittstelle setzen */
-    if (iError == 0)
-    {
-        wrk_termios = org_termios;
-        wrk_termios.c_cc[VTIME] = 0;        /* empfangene Daten     */
-        wrk_termios.c_cc[VMIN] = 0;         /* sofort abliefern     */
-        wrk_termios.c_iflag = IGNBRK;       /* BREAK ignorieren     */
-        wrk_termios.c_oflag = 0;            /* keine Delays oder    */
-        wrk_termios.c_lflag = 0;            /* Sonderbehandlungen   */
-        wrk_termios.c_cflag |=  (CS8        /* 8 Bit                */
-                				|CREAD      /* RX ein               */
-                				|CLOCAL);   /* kein Handshake       */
-
-        wrk_termios.c_cflag &= ~(CSTOPB     /* 1 Stop-Bit           */
-                				|PARENB    	/* ohne Paritaet        */
-                				|HUPCL);   	/* kein Handshake       */
-
-#ifdef CRTSCTS
-        if (rtscts)                         /* RTS/CTS Handshake    */
-            wrk_termios.c_cflag |= CRTSCTS;
-        else
-            wrk_termios.c_cflag &= ~CRTSCTS;
-#else
-        if (rtscts)
-        {
-            iError = 4;
-            printf("Error: RTS/CTS flow control not supported on this platform\r\n");
-        }
-#endif
-
-        /* pty verwenden ? */
-        if (speed != B0)                    /* B0 -> pty soll ver-  */
-        {                                   /* wendet werden        */
-        	/* Empfangsparameter setzen */
-            if (cfsetispeed(&(wrk_termios), speed) == -1)
-            {
-                iError = 4;
-                printf("Error: can't set input bitrate on %s\r\n", port);
-                printf("       (%s)\r\n", strerror(errno));
-            }
-
-            /* Empfangsparameter setzen */
-            if (cfsetospeed(&(wrk_termios), speed) == -1)
-            {
-                iError = 4;
-                printf("Error: can't set output bitrate on %s\r\n", port);
-                printf("       (%s)\r\n", strerror(errno));
-            }
-        }
-    }
-
-    /* Serielle Schnittstelle auf neue Parameter einstellen */
-    if (iError == 0)
-    {
-        tcsetattr(iDescriptor, TCSADRAIN, &wrk_termios);
-    }
-    else
-    {
-		/* Fehlerbehandlung */
-		/* Port war schon offen, alte Einstellungen wiederherstellen */
-		if (iError > 3)
-			tcsetattr(iDescriptor, TCSADRAIN, &org_termios);
-
-		/* Port war schon offen, aber noch nicht veraendert, nur schliessen */
-		if (iError > 2)
-		{
-			close(iDescriptor);
-		}
-    }
-
-    iError = iError != 0 ? -1 : 0;
-
-    return iError;
 }
