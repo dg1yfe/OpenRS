@@ -690,6 +690,47 @@ int findNext(void)
 */
 
 
+/* DOS style wildcard match ('*', '?'), case-insensitive like the TNC */
+int wildcardMatch(const char * p, const char * s)
+{
+	for(; *p; p++, s++)
+	{
+		if(*p=='*')
+		{
+			while(*++p=='*')
+				;
+			if(!*p)
+				return 1;
+			for(; *s; s++)
+			{
+				if(wildcardMatch(p, s))
+					return 1;
+			}
+			return 0;
+		}
+		if(!*s)
+			return 0;
+		if(*p!='?' && toupper((unsigned char) *p)!=toupper((unsigned char) *s))
+			return 0;
+	}
+	return *s==0;
+}
+
+
+/* next directory entry matching pattern, "*.*" matches all (DOS semantics) */
+struct dirent * findNextMatch(DIR * d, const char * pattern)
+{
+	struct dirent * e;
+
+	while((e=readdir(d)))
+	{
+		if(!strcmp(pattern, "*.*") || wildcardMatch(pattern, e->d_name))
+			return e;
+	}
+	return NULL;
+}
+
+
 /* map DOS path from TNC to a file name in the current directory.
    Like the TNC file system, lookup is case-insensitive but case-preserving:
    an existing file is used with its actual spelling (exact match preferred),
@@ -756,6 +797,7 @@ void protocolHandler(char c)
 	static int bc;
 #endif
 	static int listdir=0;
+	static char findPattern[PATH_MAX];
 
 	int r;
 
@@ -1231,10 +1273,12 @@ void protocolHandler(char c)
 				}
 				fprintf(stderr, "Sanitized Path: %s\r\n", cc);
 
-				cd = strstr(cc,"*.*");
-				if(cd)
+				cd = strrchr(cc,'/');
+				cd = cd ? cd+1 : cc;
+				if(strpbrk(cd,"*?"))
 				{
-					// list directory
+					// list directory, cc keeps the directory part
+					strcpy(findPattern, cd);
 					*cd = 0;
 					listdir = 1;
 				}
@@ -1243,7 +1287,7 @@ void protocolHandler(char c)
 				{
 					sprintf(wd,"%s/%s",cwd,cc);
 					dirp = opendir(wd);
-					if(dirp && (dir = readdir(dirp)))
+					if(dirp && (dir = findNextMatch(dirp, findPattern)))
 					{
 						putWEsc(0);
 						foundFile(dir);
@@ -1303,7 +1347,7 @@ void protocolHandler(char c)
 		{
 			struct dirent * dir;
 
-			if(listdir && dirp && (dir = readdir(dirp)))
+			if(listdir && dirp && (dir = findNextMatch(dirp, findPattern)))
 			{
 				putWEsc(0);
 				foundFile(dir);
