@@ -1,4 +1,6 @@
 # Build the release archives and attach them to a draft GitHub Release.
+# Targets: Linux (x86-64, aarch64, armv7, armv6), Windows (x86-64) and macOS
+# (universal).
 #
 # Triggered by pushing an annotated version tag:
 #
@@ -74,11 +76,16 @@ jobs:
           # later; Debian armhf baseline, no NEON), and armv6 for the Pi 1
           # and Zero, which cannot run armv7 code. The ARM builds are tested
           # under qemu; armv6 with the Pi 1 CPU, so armv7 instructions trap.
-          - { os: ubuntu-latest, name: x86_64-linux,  target: x86_64-linux-musl,     cpu: '',                                 runner: '' }
-          - { os: ubuntu-latest, name: aarch64-linux, target: aarch64-linux-musl,    cpu: '',                                 runner: qemu-aarch64-static }
-          - { os: ubuntu-latest, name: armv7-linux,   target: arm-linux-musleabihf,  cpu: '-mcpu=generic+v7a+vfp3d16-neon',  runner: qemu-arm-static }
-          - { os: ubuntu-latest, name: armv6-linux,   target: arm-linux-musleabihf,  cpu: '-mcpu=arm1176jzf_s',               runner: 'qemu-arm-static -cpu arm1176' }
-          - { os: macos-latest,  name: universal-macos, target: '',                  cpu: '',                                 runner: '' }
+          #
+          # Windows is cross-compiled the same way (mingw-w64, UCRT) and tested
+          # under wine, with a wine COM port linked to the test's pseudo
+          # terminal.
+          - { os: ubuntu-latest, name: x86_64-linux,    target: x86_64-linux-musl,    cpu: '',                                runner: '',                           exe: openrs,     ext: tar.gz }
+          - { os: ubuntu-latest, name: aarch64-linux,   target: aarch64-linux-musl,   cpu: '',                                runner: qemu-aarch64-static,          exe: openrs,     ext: tar.gz }
+          - { os: ubuntu-latest, name: armv7-linux,     target: arm-linux-musleabihf, cpu: '-mcpu=generic+v7a+vfp3d16-neon', runner: qemu-arm-static,              exe: openrs,     ext: tar.gz }
+          - { os: ubuntu-latest, name: armv6-linux,     target: arm-linux-musleabihf, cpu: '-mcpu=arm1176jzf_s',              runner: 'qemu-arm-static -cpu arm1176', exe: openrs,    ext: tar.gz }
+          - { os: ubuntu-latest, name: x86_64-windows,  target: x86_64-windows-gnu,   cpu: '',                                runner: wine,                         exe: openrs.exe, ext: zip }
+          - { os: macos-latest,  name: universal-macos, target: '',                   cpu: '',                                runner: '',                           exe: openrs,     ext: tar.gz }
     steps:
       - uses: actions/checkout@v4
         with: { ref: '${{ env.TAG }}' }
@@ -92,8 +99,8 @@ jobs:
           if [ "${{ matrix.name }}" = universal-macos ]; then
             # One file for both Mac architectures. The Intel slice keeps
             # supporting older macOS; Apple Silicon starts at macOS 11.
-            clang "${flags[@]}" -arch arm64  -mmacosx-version-min=11.0  -o out/openrs-arm64  src/OpenRS.c
-            clang "${flags[@]}" -arch x86_64 -mmacosx-version-min=10.13 -o out/openrs-x86_64 src/OpenRS.c
+            clang "${flags[@]}" -arch arm64  -mmacosx-version-min=11.0  -o out/openrs-arm64  src/*.c
+            clang "${flags[@]}" -arch x86_64 -mmacosx-version-min=10.13 -o out/openrs-x86_64 src/*.c
             lipo -create -output out/openrs out/openrs-arm64 out/openrs-x86_64
             rm out/openrs-arm64 out/openrs-x86_64
             strip out/openrs
@@ -104,12 +111,13 @@ jobs:
             python3 -m venv "$RUNNER_TEMP/zig"
             echo 'ziglang==0.13.0.post1 --hash=sha256:5ff0f2cb0d583b4f94820909612043f62e4d1d9a8bed77ceec088a01fc2ef015' > "$RUNNER_TEMP/zig.txt"
             "$RUNNER_TEMP/zig/bin/pip" install -q --only-binary :all: --require-hashes -r "$RUNNER_TEMP/zig.txt"
+            case "${{ matrix.target }}" in *linux*) flags+=(-static) ;; esac
             "$RUNNER_TEMP/zig/bin/python" -m ziglang cc -target ${{ matrix.target }} ${{ matrix.cpu }} \
-              "${flags[@]}" -static -s -o out/openrs src/OpenRS.c
-            file out/openrs
+              "${flags[@]}" -s -o out/${{ matrix.exe }} src/*.c
+            file out/${{ matrix.exe }}
             # A dynamically linked binary is worse than a failed build: it
             # ships and then fails on the user's machine.
-            if file out/openrs | grep -q 'dynamically linked'; then
+            if file out/${{ matrix.exe }} | grep -q 'dynamically linked'; then
               echo 'dynamically linked, refusing to ship it' >&2; exit 1
             fi
           fi
@@ -118,25 +126,39 @@ jobs:
       # tests play the TNC over a pseudo terminal against what is about to ship.
       - name: Test
         shell: bash
+        env:
+          WINEDEBUG: -all
         run: |
-          if [ -n "${{ matrix.runner }}" ]; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
-          fi
-          ${{ matrix.runner }} out/openrs | grep -F "OpenRS ${TAG#v}"
-          python3 tests/protocol_test.py out/openrs ${{ matrix.runner }}
+          case "${{ matrix.runner }}" in
+            qemu*)
+              sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static ;;
+            wine)
+              sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends wine wine64
+              export WINEPREFIX="$RUNNER_TEMP/wine"
+              echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
+              wineboot --init ;;
+          esac
+          ${{ matrix.runner }} out/${{ matrix.exe }} | grep -F "OpenRS ${TAG#v}"
+          python3 tests/protocol_test.py out/${{ matrix.exe }} ${{ matrix.runner }}
 
       - name: Package
         shell: bash
         run: |
           dir="openrs-${TAG#v}-${{ matrix.name }}"
           mkdir -p "$dir"
-          cp out/openrs README.md "$dir"/
-          tar czf "$dir.tar.gz" "$dir"
-          ls -l "$dir.tar.gz"
+          cp out/${{ matrix.exe }} README.md "$dir"/
+          if [ "${{ matrix.ext }}" = zip ]; then
+            zip -qr "$dir.zip" "$dir"
+          else
+            tar czf "$dir.tar.gz" "$dir"
+          fi
+          ls -l "$dir.${{ matrix.ext }}"
 
       - name: Upload to the draft
         if: github.event_name == 'push'
-        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber openrs-*.tar.gz
+        # Only the extension this target produces: gh treats a pattern that
+        # matches nothing as an error.
+        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber openrs-*.${{ matrix.ext }}
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -147,7 +169,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: openrs-*.tar.gz
+          path: openrs-*.${{ matrix.ext }}
           if-no-files-found: error
 
   # The release is left as a draft. Publishing is a deliberate act by a person

@@ -4,24 +4,25 @@ File transfer and terminal for TNC3 / TNC4
 For those still owning and using a TNC3/TNC4. (Another DL1GJI software and protocol reverse-engineered... :) )
 
 It may still need some polishing, but flashing and transferring files from and to the ramdisk should work.
-Tested on OS-X and Linux...
+Runs on Linux, macOS and Windows.
 
 ### Usage
 
     openrs [-r] <serialPort> [speed]
 
+`serialPort` is e.g. `/dev/ttyUSB0` (Linux), `/dev/tty.usbserial-…` (macOS) or `COM3` (Windows).
 `-r` enables RTS/CTS hardware flow control (only with a cable that carries the handshake lines). On the TNC, files on the PC are addressed with the drive letter `c:`, e.g. `cp c:\prog.apl r:prog.apl` or `ls c:\*.*`. OpenRS serves files from the current directory only.
 
 ### Build and test
 
-    cc -O2 -Wall -o openrs src/OpenRS.c
+    cc -O2 -Wall -o openrs src/*.c
     python3 tests/protocol_test.py ./openrs
 
-The tests play the TNC side of the protocol over a pseudo terminal; no TNC is needed.
+On Windows, build with MinGW (`gcc -O2 -o openrs.exe src/*.c`). The tests play the TNC side of the protocol over a pseudo terminal, so no TNC is needed; they run on Linux and macOS, and against a Windows build under wine (`python3 tests/protocol_test.py openrs.exe wine`).
 
 ### Releases
 
-Pushing an annotated tag `v<version>` builds static Linux binaries (x86-64, aarch64, armv7, armv6) and a universal macOS binary, tests them and attaches them to a draft release. The tag annotation becomes the release notes.
+Pushing an annotated tag `v<version>` builds static Linux binaries (x86-64, aarch64, armv7, armv6), a Windows binary (x86-64) and a universal macOS binary, tests them and attaches them to a draft release. The tag annotation becomes the release notes.
 
 ----
 

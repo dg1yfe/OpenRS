@@ -234,8 +234,12 @@ int main(int argc, char *argv[]) {
 		printf("!!! Use DOS/Windows style drive letters as prefix to read from TNC to a local file\n\r");
 		printf("    otherwise the TNC will not initiate the transfer.\n\r");
 		printf("The drive letter will be stripped and the file placed in the current directory.\r\n");
-		printf("Example:\nopenrs /dev/tty.usb 19200 cp r:dip1.scr c:dip1.scr\r\n\r\n");
-		printf("Example:\nopenrs /dev/tty.usb 19200 flash epflash.bin\r\n\r\n");
+#ifdef _WIN32
+		printf("Example:\r\nopenrs COM3 19200\r\n\r\n");
+#else
+		printf("Example:\r\nopenrs /dev/ttyUSB0 19200\r\n\r\n");
+#endif
+		printf("Then, on the TNC:\r\ncp c:\\dip1.scr r:dip1.scr\r\n\r\n");
 		exit(0);
 	}
 
