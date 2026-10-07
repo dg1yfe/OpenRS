@@ -20,10 +20,6 @@ Runs on Linux, macOS and Windows.
 
 On Windows, build with MinGW (`gcc -O2 -o openrs.exe src/*.c`). The tests play the TNC side of the protocol over a pseudo terminal, so no TNC is needed; they run on Linux and macOS, and against a Windows build under wine (`python3 tests/protocol_test.py openrs.exe wine`).
 
-### Releases
-
-Pushing an annotated tag `v<version>` builds static Linux binaries (x86-64, aarch64, armv7, armv6), a Windows binary (x86-64) and a universal macOS binary, tests them and attaches them to a draft release. The tag annotation becomes the release notes.
-
 ----
 
 Dateitransfer und Terminal für TNC3 / TNC4
