@@ -511,6 +511,8 @@ void foundFile(struct dirent * dir)
 	struct FileInfo dirFile;
 	char * name;
 
+	memset(&dirFile,0,sizeof(dirFile));
+
 	name = malloc(strlen(wd)+strlen(dir->d_name)+1);
 	if(name==NULL)
 	{
@@ -545,7 +547,6 @@ void foundFile(struct dirent * dir)
 	}
 	else
 	{
-		memset(&dirFile,0,sizeof(dirFile));
 		strncpy(dirFile.filename, dir->d_name, 13);
 	}
 	putfiEsc(&dirFile);
