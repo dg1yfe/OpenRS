@@ -40,6 +40,10 @@
 
 #define DEFAULT_BITRATE 19200;
 
+#ifndef OPENRS_VERSION
+#define OPENRS_VERSION "dev"	// release builds set this from the tag
+#endif
+
 enum {CMD_FOPEN, CMD_FREAD, CMD_FWRITE, CMD_FCLOSE,
 	CMD_FGETC, CMD_FPUTC, CMD_FGETS, CMD_FPUTS,
 	CMD_FINDFIRST, CMD_FINDNEXT,
@@ -266,7 +270,8 @@ int main(int argc, char *argv[]) {
 	}
 	else
 	{
-		printf("\nPlease specify serial device and (optionally) speed (default: 19200).\r\n");
+		printf("\nOpenRS " OPENRS_VERSION "\r\n");
+		printf("Please specify serial device and (optionally) speed (default: 19200).\r\n");
 		printf("Usage: openrs [-r] <serialPort> <speed> <tnc command>\r\n");
 		printf("  -r, --rtscts  enable RTS/CTS hardware flow control.\r\n");
 		printf("                Only use with a cable carrying the handshake lines,\r\n");
