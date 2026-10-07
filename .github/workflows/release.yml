@@ -135,11 +135,13 @@ jobs:
             wine)
               sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends wine wine64
               export WINEPREFIX="$RUNNER_TEMP/wine"
-              wineboot --init >/dev/null 2>&1
-              # One persistent wineserver for all test runs. Started here with
-              # its output discarded; otherwise each run starts its own, which
-              # inherits this step's output and dumps its object table into it.
-              wineserver -p >/dev/null 2>&1 ;;
+              # One persistent wineserver for wineboot and all test runs,
+              # started first and with its output discarded. Otherwise each
+              # run starts its own, which inherits this step's output and
+              # dumps its object table into it. (-p fails if one is running.)
+              mkdir -p "$WINEPREFIX"
+              wineserver -p >/dev/null 2>&1
+              wineboot --init >/dev/null 2>&1 ;;
           esac
           ${{ matrix.runner }} out/${{ matrix.exe }} | grep -F "OpenRS ${TAG#v}"
           python3 tests/protocol_test.py out/${{ matrix.exe }} ${{ matrix.runner }}
