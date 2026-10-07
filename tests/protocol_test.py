@@ -7,13 +7,16 @@ library is used; runs on Linux and macOS.
 
 Usage: protocol_test.py <openrs binary> [runner ...]
        e.g. protocol_test.py ./openrs qemu-aarch64-static
+            protocol_test.py ./openrs.exe wine
+
+Under wine, a COM port of the wine prefix is linked to the pseudo terminal and
+OpenRS is given that port name.
 """
 
 import os
 import pty
 import select
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -25,6 +28,9 @@ FOPEN, FREAD, FWRITE, FCLOSE, FGETC = 0x00, 0x01, 0x02, 0x03, 0x04
 FINDFIRST, FINDNEXT, REMOVE, FSEEK, UNGETC = 0x08, 0x09, 0x0A, 0x0D, 0x0E
 
 COMMAND = sys.argv[2:] + [os.path.abspath(sys.argv[1])]
+WINE = any(os.path.basename(a).startswith("wine") for a in sys.argv[2:3])
+WINE_COM = "COM9"
+STARTUP = 2.0 if WINE else 0.5     # seconds until OpenRS has opened the port
 
 
 def esc(data):
@@ -68,14 +74,21 @@ class OpenRS:
             with open(path, "wb") as f:
                 f.write(content)
         self.master, self.slave = pty.openpty()
-        tty = os.ttyname(self.slave)
+        port = os.ttyname(self.slave)
+        if WINE:
+            prefix = os.environ.get("WINEPREFIX", os.path.expanduser("~/.wine"))
+            link = os.path.join(prefix, "dosdevices", WINE_COM.lower())
+            if os.path.lexists(link):
+                os.remove(link)
+            os.symlink(port, link)
+            port = WINE_COM
         self.proc = subprocess.Popen(
-            COMMAND + [a.replace("TTY", tty) for a in (args or [tty])],
+            COMMAND + [a.replace("TTY", port) for a in (args or ["TTY"])],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             cwd=self.dir)
-        time.sleep(0.5)
+        time.sleep(STARTUP)
 
-    def read(self, first_timeout=3.0, idle=0.3):
+    def read(self, first_timeout=5.0, idle=0.3):
         out, timeout = b"", first_timeout
         while select.select([self.master], [], [], timeout)[0]:
             out += os.read(self.master, 65536)
@@ -93,13 +106,19 @@ class OpenRS:
         reply = unesc(self.call(request(FOPEN, S(path) + S(mode))))
         return int.from_bytes(reply, "big")
 
-    def close(self):
-        self.proc.send_signal(signal.SIGTERM)
+    def stop(self):
+        """End OpenRS with CTRL-C on the keyboard, which works on every platform."""
         try:
-            code = self.proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
+            self.proc.stdin.write(b"\x03")
+            self.proc.stdin.flush()
+            return self.proc.wait(timeout=10)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
             self.proc.kill()
-            code = "hung"
+            self.proc.wait()
+            return "did not exit on CTRL-C"
+
+    def close(self):
+        code = self.stop()
         os.close(self.master)
         os.close(self.slave)
         shutil.rmtree(self.dir)
@@ -206,6 +225,19 @@ def test_invalid_handles():
         for h in (0, 999):
             assert unesc(t.call(request(FCLOSE, L(h)))) == b"\xff\xff"
             assert t.call(request(FREAD, L(16) + L(h))) == bytes([ETX])
+
+
+def test_serves_without_keyboard():
+    # stdin at its end (e.g. openrs ... </dev/null) must not stop serving the TNC
+    t = OpenRS({"f.txt": b"x"})
+    try:
+        t.proc.stdin.close()
+        time.sleep(0.5)
+        h = t.fopen("c:\\f.txt", "rb")
+        assert h != 0
+        assert t.call(request(FREAD, L(16) + L(h))) == b"x" + bytes([ETX])
+    finally:
+        t.close()
 
 
 def test_keystrokes_escaped():
