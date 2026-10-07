@@ -172,12 +172,12 @@ def test_findfirst():
     files = {"prog.apl": b"", "Tool.APL": b"", "dip1.scr": b"", "dip10.scr": b"",
              "a_very_long_file_name.txt": b"", "sub/x.apl": b""}
     with OpenRS(files) as t:
-        assert list_dir(t, "c:\\*.apl") == ["Tool.APL", "prog.apl"]
-        assert list_dir(t, "c:\\DIP?.SCR") == ["dip1.scr"]
-        assert list_dir(t, "c:\\sub\\*.*") == [".", "..", "x.apl"]
+        assert (got := list_dir(t, "c:\\*.apl")) == ["Tool.APL", "prog.apl"], got
+        assert (got := list_dir(t, "c:\\DIP?.SCR")) == ["dip1.scr"], got
+        assert (got := list_dir(t, "c:\\sub\\*.*")) == [".", "..", "x.apl"], got
         assert "a_very_long_f" in list_dir(t, "c:\\*.*")
-        assert list_dir(t, "c:\\tool.apl") == ["Tool.APL"]
-        assert list_dir(t, "c:\\*.xyz") == []
+        assert (got := list_dir(t, "c:\\tool.apl")) == ["Tool.APL"], got
+        assert (got := list_dir(t, "c:\\*.xyz")) == [], got
         # a further findnext after the end must not crash
         assert t.call(request(FINDNEXT)) == b"\xff\xff"
 
