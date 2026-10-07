@@ -108,6 +108,8 @@ class OpenRS:
 
     def stop(self):
         """End OpenRS with CTRL-C on the keyboard, which works on every platform."""
+        if self.proc.poll() is not None:
+            return self.proc.returncode
         try:
             self.proc.stdin.write(b"\x03")
             self.proc.stdin.flush()
@@ -225,6 +227,25 @@ def test_invalid_handles():
         for h in (0, 999):
             assert unesc(t.call(request(FCLOSE, L(h)))) == b"\xff\xff"
             assert t.call(request(FREAD, L(16) + L(h))) == bytes([ETX])
+
+
+def test_command_sent():
+    # the TNC command from the command line is typed on the TNC, escaped
+    with OpenRS(args=["TTY", "19200", "cp", "c:\\x\x10y", "r:x"]) as t:
+        assert t.read() == b"cp c:\\x" + bytes([DLE, DLE]) + b"y r:x\r"
+
+
+def test_close_after():
+    with OpenRS({"f.txt": b"x"}, args=["-c", "3", "TTY", "19200"]) as t:
+        # still serving before the time is up
+        assert t.fopen("c:\\f.txt", "rb") != 0
+        assert t.proc.wait(timeout=15) == 0
+
+
+def test_option_errors():
+    for args in (["-c"], ["-c", "abc", "x"], ["--close-after=0", "x"], ["-x", "x"]):
+        res = subprocess.run(COMMAND + args, capture_output=True, timeout=30)
+        assert res.returncode == 1, (args, res.returncode)
 
 
 def test_serves_without_keyboard():
