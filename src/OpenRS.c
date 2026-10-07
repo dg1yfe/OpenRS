@@ -758,15 +758,29 @@ char * localFileName(char * dosPath, char * buf, size_t len)
 	else
 		s++;
 
-	if(*s && access(s, F_OK)!=0 && (d=opendir(".")))
+	// look the name up in the directory rather than with access(): on a
+	// case-insensitive file system (macOS) access() succeeds for any spelling
+	if(*s && (d=opendir(".")))
 	{
+		char * match = NULL;
+
 		while((e=readdir(d)))
 		{
-			if(strcasecmp(e->d_name, s)==0)
+			if(strcmp(e->d_name, s)==0)
 			{
-				memcpy(s, e->d_name, strlen(s));	// same length
+				free(match);	// exact match, keep the name
+				match = NULL;
 				break;
 			}
+			if(!match && strcasecmp(e->d_name, s)==0)
+			{
+				match = strdup(e->d_name);
+			}
+		}
+		if(match)
+		{
+			memcpy(s, match, strlen(s));	// same length
+			free(match);
 		}
 		closedir(d);
 	}
