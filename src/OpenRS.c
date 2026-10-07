@@ -90,7 +90,7 @@ char * wd = NULL;
 
 
 void protocolHandler(char c);
-int openSerial(char * port, int speed);
+int openSerial(char * port, int speed, int rtscts);
 
 void restoreState(void)
 {
@@ -185,6 +185,23 @@ int main(int argc, char *argv[]) {
 	int bitrate = DEFAULT_BITRATE;
 	char data[1024];
 	int i;
+	int rtscts = 0;
+
+	// options must precede the positional arguments
+	while(argc > 1 && argv[1][0] == '-')
+	{
+		if(!strcmp(argv[1], "-r") || !strcmp(argv[1], "--rtscts"))
+		{
+			rtscts = 1;
+		}
+		else
+		{
+			fprintf(stderr, "Unknown option %s\r\n", argv[1]);
+			exit(1);
+		}
+		argc--;
+		argv++;
+	}
 
 	if(argc > 1)
 	{
@@ -248,7 +265,10 @@ int main(int argc, char *argv[]) {
 	else
 	{
 		printf("\nPlease specify serial device and (optionally) speed (default: 19200).\r\n");
-		printf("Usage: openrs <serialPort> <speed> <tnc command>\r\n");
+		printf("Usage: openrs [-r] <serialPort> <speed> <tnc command>\r\n");
+		printf("  -r, --rtscts  enable RTS/CTS hardware flow control.\r\n");
+		printf("                Only use with a cable carrying the handshake lines,\r\n");
+		printf("                otherwise nothing will be sent to the TNC.\r\n");
 		printf("Exit with CTRL-C\r\n\r\n");
 		printf("!!! Use DOS/Windows style drive letters as prefix to read from TNC to a local file\n\r");
 		printf("    otherwise the TNC will not initiate the transfer.\n\r");
@@ -274,7 +294,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT,restoreStateSig);
     signal(SIGTERM,restoreStateSig);
 
-    if(openSerial(port, bitrate)!=0)
+    if(openSerial(port, bitrate, rtscts)!=0)
     {
     	exit(1);
     }
@@ -1375,7 +1395,7 @@ void protocolHandler(char c)
 }
 
 
-int openSerial(char * port, int speed)
+int openSerial(char * port, int speed, int rtscts)
 {
 	int iError;
 
@@ -1476,6 +1496,19 @@ int openSerial(char * port, int speed)
         wrk_termios.c_cflag &= ~(CSTOPB     /* 1 Stop-Bit           */
                 				|PARENB    	/* ohne Paritaet        */
                 				|HUPCL);   	/* kein Handshake       */
+
+#ifdef CRTSCTS
+        if (rtscts)                         /* RTS/CTS Handshake    */
+            wrk_termios.c_cflag |= CRTSCTS;
+        else
+            wrk_termios.c_cflag &= ~CRTSCTS;
+#else
+        if (rtscts)
+        {
+            iError = 4;
+            printf("Error: RTS/CTS flow control not supported on this platform\r\n");
+        }
+#endif
 
         /* pty verwenden ? */
         if (speed != B0)                    /* B0 -> pty soll ver-  */
