@@ -1364,7 +1364,7 @@ void protocolHandler(char c)
 		{
 			if(iArg==1)
 			{
-				getArgument = GET_STRING1;
+				getArgument = GET_FD;
 			}
 			else
 			{
