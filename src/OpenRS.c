@@ -689,6 +689,33 @@ int findNext(void)
 */
 
 
+/* map DOS path from TNC to a file name in the current directory */
+char * localFileName(char * dosPath, char * buf, size_t len)
+{
+	char * s;
+
+	for(s=dosPath; *s; s++)
+	{
+		*s=tolower((unsigned char) *s);
+	}
+
+	if(sanitizePath(dosPath, buf, len))
+	{
+		buf[0]=0;
+	}
+	fprintf(stderr, "Sanitized Path: %s\r\n", buf);
+
+	s=strrchr(buf,'/');	// restrict access to current directory
+	if(s==NULL)
+		s=buf;
+	else
+		s++;
+
+	fprintf(stderr, "restricted path: %s\r\n", s);
+	return s;
+}
+
+
 /* map TNC file handle (1..MAXFPTR) to FILE *, NULL if invalid or not open */
 FILE * getFile(int fd)
 {
@@ -946,23 +973,7 @@ void protocolHandler(char c)
 				struct stat st;
 				char local_path[PATH_MAX];
 
-				s=arg_str1;
-				while(*s)
-				{
-					*s=tolower(*s);
-					s++;
-				}
-
-				sanitizePath(arg_str1,local_path, sizeof local_path);
-				fprintf(stderr, "Sanitized Path: %s\r\n", local_path);
-
-				s=strrchr(local_path,'/');	// restrict access to current directory
-				if(s==NULL)
-					s=local_path;
-				else
-					s++;
-
-				fprintf(stderr, "restricted path: %s\r\n", s);
+				s=localFileName(arg_str1, local_path, sizeof local_path);
 
 				a=strchr(arg_str2, 'w');
 				if(!a)
@@ -1300,8 +1311,26 @@ void protocolHandler(char c)
 		}
 		case CMD_REMOVE:
 		{
-			fprintf(stderr,"Request to remove file ignored. (unimplemented)\r\n.");
-			fprintf(stderr,"Please remove %s manually\r\n",arg_str1);
+			char local_path[PATH_MAX];
+			char * s;
+			struct stat st;
+			int res = -1;
+
+			// same name mapping as FOPEN, regular files only
+			s=localFileName(arg_str1, local_path, sizeof local_path);
+			if((stat(s, &st)==0) && S_ISREG(st.st_mode))
+			{
+				res=unlink(s);
+			}
+			if(res==0)
+			{
+				printf("File %s removed.\r\n", s);
+			}
+			else
+			{
+				printf("Could not remove %s.\r\n", s);
+			}
+			putWEsc((uint16_t) res);
 			state = STATE_IDLE;
 			break;
 		}
