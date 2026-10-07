@@ -287,4 +287,10 @@ void sleepMs(int ms)
 	Sleep(ms);
 }
 
+
+unsigned long long timeMs(void)
+{
+	return GetTickCount64();
+}
+
 #endif

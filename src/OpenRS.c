@@ -146,6 +146,8 @@ int main(int argc, char *argv[]) {
 	int i;
 	int rtscts = 0;
 	int consoleOpen = 1;
+	double closeAfter = 0;		// seconds, 0 = run until CTRL-C
+	unsigned long long startMs;
 
 	// options must precede the positional arguments
 	while(argc > 1 && argv[1][0] == '-')
@@ -153,6 +155,35 @@ int main(int argc, char *argv[]) {
 		if(!strcmp(argv[1], "-r") || !strcmp(argv[1], "--rtscts"))
 		{
 			rtscts = 1;
+		}
+		else
+		if(!strcmp(argv[1], "-c") || !strcmp(argv[1], "--close-after")
+				|| !strncmp(argv[1], "--close-after=", 14))
+		{
+			const char * v = strchr(argv[1], '=');
+			char * end;
+
+			if(v)
+			{
+				v++;
+			}
+			else
+			{
+				if(argc < 3)
+				{
+					fprintf(stderr, "Option %s needs a value (seconds)\r\n", argv[1]);
+					exit(1);
+				}
+				argc--;
+				argv++;
+				v = argv[1];
+			}
+			closeAfter = strtod(v, &end);
+			if(end == v || *end || closeAfter <= 0)
+			{
+				fprintf(stderr, "Invalid time for --close-after: %s\r\n", v);
+				exit(1);
+			}
 		}
 		else
 		{
@@ -189,7 +220,6 @@ int main(int argc, char *argv[]) {
 		{
 			int i;
 			int len = 0;
-			char * cmd;
 
 			for(i=3;i<argc;i++)
 			{
@@ -205,32 +235,27 @@ int main(int argc, char *argv[]) {
 				exit(1);
 			}
 
-			memset(command,0,len);
-			cmd = command;
+			// join the arguments with single spaces
+			command[0]=0;
 			for(i=3;i<argc;i++)
 			{
-				if(len<=0)
-					break;
-				strncpy(cmd, argv[i], len);
-				len -= strlen(argv[i]);
-				cmd += strlen(argv[i]);
-				if(len<=0)
-					break;
-				*cmd++=' ';
-				len--;
+				if(i>3)
+					strcat(command, " ");
+				strcat(command, argv[i]);
 			}
-			*cmd=0;
 		}
 	}
 	else
 	{
 		printf("\nOpenRS " OPENRS_VERSION "\r\n");
 		printf("Please specify serial device and (optionally) speed (default: 19200).\r\n");
-		printf("Usage: openrs [-r] <serialPort> <speed> <tnc command>\r\n");
-		printf("  -r, --rtscts  enable RTS/CTS hardware flow control.\r\n");
-		printf("                Only use with a cable carrying the handshake lines,\r\n");
-		printf("                otherwise nothing will be sent to the TNC.\r\n");
-		printf("Exit with CTRL-C\r\n\r\n");
+		printf("Usage: openrs [options] <serialPort> [speed [tnc command]]\r\n");
+		printf("  -r, --rtscts           enable RTS/CTS hardware flow control.\r\n");
+		printf("                         Only use with a cable carrying the handshake\r\n");
+		printf("                         lines, otherwise nothing will be sent to the TNC.\r\n");
+		printf("  -c, --close-after <s>  exit after <s> seconds (e.g. after a command)\r\n");
+		printf("A TNC command given after the speed is sent to the TNC once the port\r\n");
+		printf("is open, as if typed. Exit with CTRL-C\r\n\r\n");
 		printf("!!! Use DOS/Windows style drive letters as prefix to read from TNC to a local file\n\r");
 		printf("    otherwise the TNC will not initiate the transfer.\n\r");
 		printf("The drive letter will be stripped and the file placed in the current directory.\r\n");
@@ -240,6 +265,13 @@ int main(int argc, char *argv[]) {
 		printf("Example:\r\nopenrs /dev/ttyUSB0 19200\r\n\r\n");
 #endif
 		printf("Then, on the TNC:\r\ncp c:\\dip1.scr r:dip1.scr\r\n\r\n");
+#ifdef _WIN32
+		printf("Or as a command, ending OpenRS after 60 seconds:\r\n"
+				"openrs -c 60 COM3 19200 cp c:\\dip1.scr r:dip1.scr\r\n\r\n");
+#else
+		printf("Or as a command, ending OpenRS after 60 seconds:\r\n"
+				"openrs -c 60 /dev/ttyUSB0 19200 'cp c:\\dip1.scr r:dip1.scr'\r\n\r\n");
+#endif
 		exit(0);
 	}
 
@@ -270,9 +302,33 @@ int main(int argc, char *argv[]) {
 	fptr = 1;
 	memset(File,0,sizeof(File));
 
+	startMs = timeMs();
+
+	if(command)
+	{
+		// type the command line on the TNC
+		char * s;
+
+		for(s = command; *s; s++)
+		{
+			putcEsc((unsigned char) *s);
+		}
+		putcEsc('\r');
+		free(command);
+		command = NULL;
+	}
+
 	while(1)
 	{
-		int ch = consoleOpen ? consoleRead() : CONSOLE_NO_KEY;
+		int ch;
+
+		if(closeAfter > 0 && timeMs() - startMs >= (unsigned long long) (closeAfter * 1000))
+		{
+			fprintf(stderr, "\r\nClosing after %g seconds.\r\n", closeAfter);
+			break;
+		}
+
+		ch = consoleOpen ? consoleRead() : CONSOLE_NO_KEY;
 
 		if(ch==CONSOLE_EOF)
 		{

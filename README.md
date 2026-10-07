@@ -8,10 +8,10 @@ Runs on Linux, macOS and Windows.
 
 ### Usage
 
-    openrs [-r] <serialPort> [speed]
+    openrs [-r] [-c seconds] <serialPort> [speed [tnc command]]
 
 `serialPort` is e.g. `/dev/ttyUSB0` (Linux), `/dev/tty.usbserial-…` (macOS) or `COM3` (Windows).
-`-r` enables RTS/CTS hardware flow control (only with a cable that carries the handshake lines). On the TNC, files on the PC are addressed with the drive letter `c:`, e.g. `cp c:\prog.apl r:prog.apl` or `ls c:\*.*`. OpenRS serves files from the current directory only.
+`-r` enables RTS/CTS hardware flow control (only with a cable that carries the handshake lines). A TNC command after the speed is typed on the TNC once the port is open; `-c`/`--close-after` ends OpenRS after the given number of seconds, e.g. `openrs -c 60 /dev/ttyUSB0 19200 'cp c:\prog.apl r:prog.apl'`. On the TNC, files on the PC are addressed with the drive letter `c:`, e.g. `cp c:\prog.apl r:prog.apl` or `ls c:\*.*`. OpenRS serves files from the current directory only.
 
 ### Build and test
 

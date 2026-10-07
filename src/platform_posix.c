@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <sys/select.h>
+#include <time.h>
 
 #include "platform.h"
 
@@ -289,6 +290,15 @@ int consoleWrite(unsigned char c)
 void sleepMs(int ms)
 {
 	usleep(ms * 1000);
+}
+
+
+unsigned long long timeMs(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (unsigned long long) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 #endif

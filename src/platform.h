@@ -26,5 +26,7 @@ int consoleRead(void);
 int consoleWrite(unsigned char c);
 
 void sleepMs(int ms);
+/* milliseconds from a monotonic clock */
+unsigned long long timeMs(void);
 
 #endif
