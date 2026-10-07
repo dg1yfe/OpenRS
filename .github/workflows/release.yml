@@ -1,0 +1,176 @@
+# Build the release archives and attach them to a draft GitHub Release.
+#
+# Triggered by pushing an annotated version tag:
+#
+#     git tag -a v1.1 -m "OpenRS 1.1 ..."   # the annotation becomes the release notes
+#     git push origin v1.1
+#
+# GitHub cannot filter on the tag type, so a lightweight tag starts the
+# workflow too; the first job then stops it with an explanation.
+#
+# A manual run (workflow_dispatch) builds, tests and packages every target as
+# a dry run and keeps the archives as workflow artifacts. It publishes nothing.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to build. A manual run builds and packages only; it publishes nothing.'
+        required: true
+        default: master
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.ref || github.ref_name }}
+
+jobs:
+  draft:
+    name: open a draft release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Asked through the API, which reports the tag object as GitHub stores
+      # it. A checkout is no help here: actions/checkout may turn an annotated
+      # tag into a lightweight one locally.
+      - name: Only annotated tags make a release
+        run: |
+          ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG")
+          if [ "$(echo "$ref" | jq -r .object.type)" != tag ]; then
+            echo "::error::$TAG is a lightweight tag. Releases are made from annotated tags: git tag -a $TAG -m '...'"
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$(echo "$ref" | jq -r .object.sha)" --jq .message > notes.md
+          cat notes.md
+
+      - name: Create the draft
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && exit 0
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "OpenRS ${TAG#v}" --notes-file notes.md
+
+  build:
+    name: ${{ matrix.name }}
+    needs: draft
+    # Run even when the draft job was skipped, which is what a dry run does.
+    if: ${{ !cancelled() && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every Linux build is linked statically against musl, so it runs on
+          # any distribution regardless of its libc. zig cc cross-compiles all
+          # of them from one runner and builds musl for the exact target CPU.
+          #
+          # The ARM targets cover the Raspberry Pi range: aarch64 for the
+          # 64-bit OS (Pi 3 and later), armv7 for the 32-bit OS (Pi 2 and
+          # later; Debian armhf baseline, no NEON), and armv6 for the Pi 1
+          # and Zero, which cannot run armv7 code. The ARM builds are tested
+          # under qemu; armv6 with the Pi 1 CPU, so armv7 instructions trap.
+          - { os: ubuntu-latest, name: x86_64-linux,  target: x86_64-linux-musl,     cpu: '',                                 runner: '' }
+          - { os: ubuntu-latest, name: aarch64-linux, target: aarch64-linux-musl,    cpu: '',                                 runner: qemu-aarch64-static }
+          - { os: ubuntu-latest, name: armv7-linux,   target: arm-linux-musleabihf,  cpu: '-mcpu=generic+v7a+vfp3d16-neon',  runner: qemu-arm-static }
+          - { os: ubuntu-latest, name: armv6-linux,   target: arm-linux-musleabihf,  cpu: '-mcpu=arm1176jzf_s',               runner: 'qemu-arm-static -cpu arm1176' }
+          - { os: macos-latest,  name: universal-macos, target: '',                  cpu: '',                                 runner: '' }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ env.TAG }}' }
+
+      - name: Build
+        shell: bash
+        run: |
+          ver="${TAG#v}"
+          flags=(-O2 -Wall -DOPENRS_VERSION="\"$ver\"")
+          mkdir -p out
+          if [ "${{ matrix.name }}" = universal-macos ]; then
+            # One file for both Mac architectures. The Intel slice keeps
+            # supporting older macOS; Apple Silicon starts at macOS 11.
+            clang "${flags[@]}" -arch arm64  -mmacosx-version-min=11.0  -o out/openrs-arm64  src/OpenRS.c
+            clang "${flags[@]}" -arch x86_64 -mmacosx-version-min=10.13 -o out/openrs-x86_64 src/OpenRS.c
+            lipo -create -output out/openrs out/openrs-arm64 out/openrs-x86_64
+            rm out/openrs-arm64 out/openrs-x86_64
+            strip out/openrs
+            lipo -info out/openrs
+          else
+            # zig from PyPI, pinned by hash: the wheel is the official zig
+            # build, and pip verifies it before anything runs.
+            python3 -m venv "$RUNNER_TEMP/zig"
+            echo 'ziglang==0.13.0.post1 --hash=sha256:5ff0f2cb0d583b4f94820909612043f62e4d1d9a8bed77ceec088a01fc2ef015' > "$RUNNER_TEMP/zig.txt"
+            "$RUNNER_TEMP/zig/bin/pip" install -q --only-binary :all: --require-hashes -r "$RUNNER_TEMP/zig.txt"
+            "$RUNNER_TEMP/zig/bin/python" -m ziglang cc -target ${{ matrix.target }} ${{ matrix.cpu }} \
+              "${flags[@]}" -static -s -o out/openrs src/OpenRS.c
+            file out/openrs
+            # A dynamically linked binary is worse than a failed build: it
+            # ships and then fails on the user's machine.
+            if file out/openrs | grep -q 'dynamically linked'; then
+              echo 'dynamically linked, refusing to ship it' >&2; exit 1
+            fi
+          fi
+
+      # A release binary that has not been tested is a guess. The protocol
+      # tests play the TNC over a pseudo terminal against what is about to ship.
+      - name: Test
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.runner }}" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+          fi
+          ${{ matrix.runner }} out/openrs | grep -F "OpenRS ${TAG#v}"
+          python3 tests/protocol_test.py out/openrs ${{ matrix.runner }}
+
+      - name: Package
+        shell: bash
+        run: |
+          dir="openrs-${TAG#v}-${{ matrix.name }}"
+          mkdir -p "$dir"
+          cp out/openrs README.md "$dir"/
+          tar czf "$dir.tar.gz" "$dir"
+          ls -l "$dir.tar.gz"
+
+      - name: Upload to the draft
+        if: github.event_name == 'push'
+        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber openrs-*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # A dry run keeps the archives as workflow artifacts instead, so what
+      # was built can be downloaded and looked at.
+      - name: Keep the archive (dry run)
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: openrs-*.tar.gz
+          if-no-files-found: error
+
+  # The release is left as a draft. Publishing is a deliberate act by a person
+  # who has looked at what was built:
+  #
+  #     gh release edit v<version> --draft=false
+  checksums:
+    name: checksums
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checksums over what was actually uploaded
+        run: |
+          mkdir dl && cd dl
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'openrs-*'
+          sha256sum openrs-* > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber SHA256SUMS
+      - name: Say what is waiting
+        run: |
+          echo "Draft release $TAG is ready for review:"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q .url
+          echo "Publish it with: gh release edit $TAG --repo $GITHUB_REPOSITORY --draft=false"
