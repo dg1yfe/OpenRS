@@ -933,11 +933,10 @@ void protocolHandler(char c)
 	case STATE_IDLE:
 	{
 		if(r>=0){
-#ifndef __APPLE__
-			if(write((stdout)->_fileno,&r,1) != 1) 	// print character in console
-#else
-				if(write((stdout)->_file,&r,1) != 1) // print character in console
-#endif
+			unsigned char ch = (unsigned char) r;
+
+			fflush(stdout);	// keep order with printf() messages
+			if(write(STDOUT_FILENO,&ch,1) != 1) 	// print character in console
 			{
 				fprintf(stderr, "Error writing to STDOUT.\r\n");
 				exit(errno);
