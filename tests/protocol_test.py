@@ -135,8 +135,22 @@ class OpenRS:
             assert code == 0, f"exit status {code}"
 
 
+def run(args=()):
+    """Run OpenRS to completion; returns (exit status, stdout).
+
+    Output goes through a file, not a pipe: under wine the first program
+    started may launch background services that inherit a pipe and keep it
+    open, so reading a pipe to its end would wait for them as well."""
+    with tempfile.TemporaryFile() as out:
+        code = subprocess.run(COMMAND + list(args), stdin=subprocess.DEVNULL, stdout=out,
+                              stderr=subprocess.DEVNULL, timeout=30).returncode
+        out.seek(0)
+        return code, out.read()
+
+
 def test_usage():
-    out = subprocess.run(COMMAND, capture_output=True, timeout=30).stdout
+    code, out = run()
+    assert code == 0, code
     assert b"Usage: openrs" in out, out
 
 
@@ -244,8 +258,8 @@ def test_close_after():
 
 def test_option_errors():
     for args in (["-c"], ["-c", "abc", "x"], ["--close-after=0", "x"], ["-x", "x"]):
-        res = subprocess.run(COMMAND + args, capture_output=True, timeout=30)
-        assert res.returncode == 1, (args, res.returncode)
+        code, _ = run(args)
+        assert code == 1, (args, code)
 
 
 def test_serves_without_keyboard():
