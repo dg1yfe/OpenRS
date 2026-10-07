@@ -1042,14 +1042,12 @@ void protocolHandler(char c)
 				while(arg_dw--)
 				{
 					d = f ? fgetc(f) : EOF;
-					if(d!=EOF)
+					if(d==EOF)
 					{
-						putcEsc(d);
+						putPort(0x03);	// short read, end data with one ETX
+						break;
 					}
-					else
-					{
-						putPort(0x03);
-					}
+					putcEsc(d);
 				}
 				state = STATE_IDLE;
 			}
