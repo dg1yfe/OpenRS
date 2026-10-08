@@ -90,17 +90,18 @@ jobs:
       - uses: actions/checkout@v4
         with: { ref: '${{ env.TAG }}' }
 
+      # Built with the Makefile, so the release also exercises the build
+      # flow users run. Only the target-specific flags are passed in.
       - name: Build
         shell: bash
         run: |
           ver="${TAG#v}"
-          flags=(-O2 -Wall -DOPENRS_VERSION="\"$ver\"")
           mkdir -p out
           if [ "${{ matrix.name }}" = universal-macos ]; then
             # One file for both Mac architectures. The Intel slice keeps
             # supporting older macOS; Apple Silicon starts at macOS 11.
-            clang "${flags[@]}" -arch arm64  -mmacosx-version-min=11.0  -o out/openrs-arm64  src/*.c
-            clang "${flags[@]}" -arch x86_64 -mmacosx-version-min=10.13 -o out/openrs-x86_64 src/*.c
+            make TARGET=out/openrs-arm64  VERSION="$ver" CFLAGS="-O2 -Wall -arch arm64  -mmacosx-version-min=11.0"
+            make TARGET=out/openrs-x86_64 VERSION="$ver" CFLAGS="-O2 -Wall -arch x86_64 -mmacosx-version-min=10.13"
             lipo -create -output out/openrs out/openrs-arm64 out/openrs-x86_64
             rm out/openrs-arm64 out/openrs-x86_64
             strip out/openrs
@@ -111,9 +112,10 @@ jobs:
             python3 -m venv "$RUNNER_TEMP/zig"
             echo 'ziglang==0.13.0.post1 --hash=sha256:5ff0f2cb0d583b4f94820909612043f62e4d1d9a8bed77ceec088a01fc2ef015' > "$RUNNER_TEMP/zig.txt"
             "$RUNNER_TEMP/zig/bin/pip" install -q --only-binary :all: --require-hashes -r "$RUNNER_TEMP/zig.txt"
-            case "${{ matrix.target }}" in *linux*) flags+=(-static) ;; esac
-            "$RUNNER_TEMP/zig/bin/python" -m ziglang cc -target ${{ matrix.target }} ${{ matrix.cpu }} \
-              "${flags[@]}" -s -o out/${{ matrix.exe }} src/*.c
+            ldflags=-s
+            case "${{ matrix.target }}" in *linux*) ldflags="-static -s" ;; esac
+            make TARGET=out/${{ matrix.exe }} VERSION="$ver" LDFLAGS="$ldflags" \
+              CC="$RUNNER_TEMP/zig/bin/python -m ziglang cc -target ${{ matrix.target }} ${{ matrix.cpu }}"
             file out/${{ matrix.exe }}
             # A dynamically linked binary is worse than a failed build: it
             # ships and then fails on the user's machine.
@@ -144,7 +146,8 @@ jobs:
               wineboot --init >/dev/null 2>&1 ;;
           esac
           ${{ matrix.runner }} out/${{ matrix.exe }} | grep -F "OpenRS ${TAG#v}"
-          python3 tests/protocol_test.py out/${{ matrix.exe }} ${{ matrix.runner }}
+          # -o: test the binary built above, never rebuild it with the host compiler
+          make -o out/${{ matrix.exe }} test TARGET=out/${{ matrix.exe }} RUNNER="${{ matrix.runner }}"
 
       - name: Package
         shell: bash
